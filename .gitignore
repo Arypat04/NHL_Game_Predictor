@@ -1,0 +1,29 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Model files (large, reproducible from CSV)
+backend/models.pkl
+
+# Environment variables (never commit API keys)
+.env
+
+# Data files (large, reproducible from scraper)
+data/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
