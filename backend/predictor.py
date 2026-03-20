@@ -106,6 +106,9 @@ def _encode_features(df: pd.DataFrame) -> pd.DataFrame:
     df["back_to_back"] = (df["days_rest"] == 1).astype(int)
     df["well_rested"] = (df["days_rest"] >= 3).astype(int)
 
+    df["Team"] = df["Team"].replace("VEG", "VGK")
+    df["Opp"] = df["Opp"].replace("VEG", "VGK")
+ 
     return df
 
 
@@ -315,6 +318,10 @@ class NHLPredictor:
         """Load the 2026 schedule — always fresh."""
         schedule = pd.read_csv(self.schedule_file)
         schedule["Date"] = pd.to_datetime(schedule["Date"])
+
+        schedule["Team"] = schedule["Team"].replace("VEG", "VGK")
+        schedule["Opponent"] = schedule["Opponent"].replace("VEG", "VGK")
+
         schedule["Opp_abbrev"] = schedule["Opponent"].map(TEAM_NAME_TO_ABBREV)
 
         missing = schedule["Opp_abbrev"].isna().sum()
@@ -323,7 +330,7 @@ class NHLPredictor:
             print(f"  ⚠ {missing} schedule rows have unmapped opponent names: {unknown}")
 
         self._schedule = schedule
-
+ 
     # ------------------------------------------------------------------
     # Prediction helpers
     # ------------------------------------------------------------------

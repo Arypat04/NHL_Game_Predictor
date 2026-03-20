@@ -37,7 +37,10 @@ HEADERS = {
 
 BASE_URL = "https://www.hockey-reference.com"
 
-RELOCATION_MAP = {"ARI": "UTA"}
+RELOCATION_MAP = {
+    "ARI": "UTA",
+    "VEG": "VGK",
+}
 
 TRAINING_SEASONS = list(range(2021, 2026))
 CURRENT_SEASON = 2026
