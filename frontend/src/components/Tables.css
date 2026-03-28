@@ -1,0 +1,101 @@
+/* shared styles for PredictionsTable, EdgesTable, ResultsTable */
+
+.predictions-table,
+.edges-table,
+.results-table {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.table-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.winner {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.best-bet {
+  color: var(--positive);
+  font-weight: 600;
+}
+
+.correct {
+  color: var(--positive);
+  font-weight: 600;
+}
+
+.incorrect {
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.empty-state {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.error-state {
+  padding: 20px;
+  text-align: center;
+  color: var(--negative);
+  font-size: 14px;
+}
+
+/* Edge badge */
+.edge-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.badge-green {
+  background: var(--positive);
+}
+
+.badge-yellow {
+  background: var(--warning);
+  color: #000000;
+}
+
+.badge-red {
+  background: var(--negative);
+}
+
+/* Loading skeletons */
+.skeleton-row td {
+  padding: 12px;
+}
+
+.skeleton-cell {
+  height: 16px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-tertiary) 25%,
+    var(--border) 50%,
+    var(--bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

@@ -1,4 +1,5 @@
 import { toAPIDate } from  '../services/api'
+import './DateTabs.css'
 
 function getLabel(date, index) {
     if (index === 0) return 'Yesterday'  // i = -1, index 0

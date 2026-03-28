@@ -46,6 +46,7 @@ TEAM_NAME_TO_ABBREV: dict[str, str] = {
     "Los Angeles Kings": "LAK",
     "Minnesota Wild": "MIN",
     "Montreal Canadiens": "MTL",
+    "Montréal Canadiens": "MTL",
     "Nashville Predators": "NSH",
     "New Jersey Devils": "NJD",
     "New York Islanders": "NYI",
