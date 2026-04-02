@@ -46,7 +46,6 @@ TEAM_NAME_TO_ABBREV: dict[str, str] = {
     "Los Angeles Kings": "LAK",
     "Minnesota Wild": "MIN",
     "Montreal Canadiens": "MTL",
-    "Montréal Canadiens": "MTL",
     "Nashville Predators": "NSH",
     "New Jersey Devils": "NJD",
     "New York Islanders": "NYI",
@@ -107,9 +106,6 @@ def _encode_features(df: pd.DataFrame) -> pd.DataFrame:
     df["back_to_back"] = (df["days_rest"] == 1).astype(int)
     df["well_rested"] = (df["days_rest"] >= 3).astype(int)
 
-    df["Team"] = df["Team"].replace("VEG", "VGK")
-    df["Opp"] = df["Opp"].replace("VEG", "VGK")
- 
     return df
 
 
@@ -269,6 +265,21 @@ class NHLPredictor:
         """Train all models and save to disk."""
         print("  Loading and preparing data...")
         train_raw = pd.read_csv(self.train_file)
+
+        # Append completed current-season games so the model learns
+        # from 2026 results as they accumulate throughout the season.
+        try:
+            current_raw = pd.read_csv(self.schedule_file)
+            if "Rslt" in current_raw.columns:
+                completed = current_raw.dropna(subset=["Rslt"])
+                if not completed.empty:
+                    if "Opponent" in completed.columns and "Opp" not in completed.columns:
+                        completed = completed.rename(columns={"Opponent": "Opp"})
+                    train_raw = pd.concat([train_raw, completed], ignore_index=True)
+                    print(f"  Added {len(completed):,} completed 2026 games to training data")
+        except Exception as e:
+            print(f"  Could not load current season data: {e}")
+
         train_prepared = prepare(train_raw)
 
         print("  Calculating rolling averages...")
@@ -319,10 +330,6 @@ class NHLPredictor:
         """Load the 2026 schedule — always fresh."""
         schedule = pd.read_csv(self.schedule_file)
         schedule["Date"] = pd.to_datetime(schedule["Date"])
-
-        schedule["Team"] = schedule["Team"].replace("VEG", "VGK")
-        schedule["Opponent"] = schedule["Opponent"].replace("VEG", "VGK")
-
         schedule["Opp_abbrev"] = schedule["Opponent"].map(TEAM_NAME_TO_ABBREV)
 
         missing = schedule["Opp_abbrev"].isna().sum()
@@ -331,7 +338,7 @@ class NHLPredictor:
             print(f"  ⚠ {missing} schedule rows have unmapped opponent names: {unknown}")
 
         self._schedule = schedule
- 
+
     # ------------------------------------------------------------------
     # Prediction helpers
     # ------------------------------------------------------------------

@@ -44,6 +44,21 @@ function EdgesTable({ edges, loading, error }) {
      return <div className="edges-table"><p className="empty-state">No games scheduled for this date.</p></div>
   }
 
+    const sortedEdges = [...edges].sort((a, b) => {
+  const parseTime = (timeStr) => {
+    const [time, modifier] = timeStr.split(' ')
+    let [hours, minutes] = time.split(':').map(Number)
+
+    if (modifier === 'PM' && hours !== 12) hours += 12
+    if (modifier === 'AM' && hours === 12) hours = 0
+
+    return hours * 60 + minutes
+  }
+
+  return parseTime(a.Time) - parseTime(b.Time)
+})
+
+
   return (
     <div className="edges-table">
       <table>
@@ -61,7 +76,7 @@ function EdgesTable({ edges, loading, error }) {
           </tr>
         </thead>
         <tbody>
-          {edges.map((game, index) => (
+          {sortedEdges.map((game, index) => (
             <tr key={index}>
               <td>{game.Time}</td>
               <td className={game.Best_Bet === "Away" ? "best-bet" : ""}>

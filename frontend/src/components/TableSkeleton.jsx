@@ -16,4 +16,6 @@ function TableSkeleton({ rows = 5, cols = 7 }) {
   )
 }
 
+
+
 export default TableSkeleton

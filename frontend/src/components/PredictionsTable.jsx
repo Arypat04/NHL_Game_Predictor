@@ -35,6 +35,20 @@ function PredictionsTable({ predictions, loading, error }) {
      return <div className="predictions-table"><p className="empty-state">No games scheduled for this date.</p></div>
   }
 
+  const sortedPredictions = [...predictions].sort((a, b) => {
+  const parseTime = (timeStr) => {
+    const [time, modifier] = timeStr.split(' ')
+    let [hours, minutes] = time.split(':').map(Number)
+
+    if (modifier === 'PM' && hours !== 12) hours += 12
+    if (modifier === 'AM' && hours === 12) hours = 0
+
+    return hours * 60 + minutes
+  }
+
+  return parseTime(a.Time) - parseTime(b.Time)
+})
+
   return (
     <div className="predictions-table">
       <table>
@@ -50,7 +64,7 @@ function PredictionsTable({ predictions, loading, error }) {
           </tr>
         </thead>
         <tbody>
-          {predictions.map((game, index) => (
+          {sortedPredictions.map((game, index) => (
             <tr key={index}>
               <td>{game.Time}</td>
               <td className={game.Predicted_Winner === game.Away ? "winner" : ""}>

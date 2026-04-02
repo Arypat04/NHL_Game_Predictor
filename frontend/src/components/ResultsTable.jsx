@@ -34,6 +34,22 @@ function ResultsTable({ results, loading, error }) {
      return <div className="results-table"><p className="empty-state">No games scheduled for this date.</p></div>
   }
 
+
+  const sortedResults = [...results].sort((a, b) => {
+  const parseTime = (timeStr) => {
+    const [time, modifier] = timeStr.split(' ')
+    let [hours, minutes] = time.split(':').map(Number)
+
+    if (modifier === 'PM' && hours !== 12) hours += 12
+    if (modifier === 'AM' && hours === 12) hours = 0
+
+    return hours * 60 + minutes
+  }
+
+  return parseTime(a.Time) - parseTime(b.Time)
+})
+
+
   return (
     <div className="results-table">
       <table>
@@ -50,7 +66,7 @@ function ResultsTable({ results, loading, error }) {
           </tr>
         </thead>
         <tbody>
-          {results.map((game, index) => (
+          {sortedResults.map((game, index) => (
             <tr key={index}>
               <td>{game.Time}</td>
               <td style={{ color: game.Status === "Live" ? "var(--positive)" : "var(--text-secondary)" }}>

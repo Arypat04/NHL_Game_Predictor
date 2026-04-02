@@ -5,7 +5,7 @@ Scrapes game log data for all NHL teams from Hockey-Reference.com.
 
 Produces two CSVs:
   - nhl_matches_2021_2025.csv  (training data, full stats)
-  - nhl_matches_2026.csv       (current season, full stats)
+  - nhl_matches_2026.csv       (current season, full stats + Rslt column)
 
 Column rename (.1 → _OPP) is applied once here at save time so all
 downstream code receives clean column names.
@@ -41,6 +41,7 @@ RELOCATION_MAP = {
     "ARI": "UTA",
     "VEG": "VGK",
 }
+
 
 TRAINING_SEASONS = list(range(2021, 2026))
 CURRENT_SEASON = 2026
@@ -97,6 +98,22 @@ def flatten_multiindex(df: pd.DataFrame) -> pd.DataFrame:
 def strip_header_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df.iloc[:, 0] != "Rk"]
     return df.dropna(subset=[df.columns[0]])
+
+
+def derive_rslt(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Derive a Rslt column (W/L) from GF and GA for the current season CSV.
+    Rows without scores (future games) get None.
+    """
+    df = df.copy()
+    df["Rslt"] = None
+    if "GF" in df.columns and "GA" in df.columns:
+        gf = pd.to_numeric(df["GF"], errors="coerce")
+        ga = pd.to_numeric(df["GA"], errors="coerce")
+        mask = gf.notna() & ga.notna()
+        df.loc[mask & (gf > ga), "Rslt"] = "W"
+        df.loc[mask & (gf < ga), "Rslt"] = "L"
+    return df
 
 
 def get_team_urls(year: int) -> list[str]:
@@ -201,6 +218,10 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
         df = flatten_multiindex(df)
         df = fix_home_away(df)
         df = strip_header_rows(df)
+
+        # derive Rslt from GF/GA so completed games can feed back into training
+        df = derive_rslt(df)
+
         df["Season"] = year
         df["Team"] = team
         all_frames.append(df)
@@ -230,3 +251,5 @@ if __name__ == "__main__":
     print("=== Done ===")
     print(f"Training columns : {training_df.columns.tolist()}")
     print(f"Current  columns : {current_df.columns.tolist()}")
+    rslt_count = current_df["Rslt"].notna().sum() if "Rslt" in current_df.columns else 0
+    print(f"Completed 2026 games with Rslt: {rslt_count:,}")
