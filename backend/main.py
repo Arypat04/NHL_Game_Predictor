@@ -6,6 +6,7 @@ from predictor import NHLPredictor, MODEL_PATH, TEAM_NAME_TO_ABBREV
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+import pandas as pd
 
 load_dotenv()
 
@@ -39,6 +40,67 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT         = "icehockey_nhl"
 NHL_API_BASE  = "https://api-web.nhle.com/v1"
 
+def calculate_season_accuracy(predictor) -> dict:
+    """
+    Calculate real current-season accuracy by comparing predictions
+    against completed game results from the 2026 schedule CSV.
+    """
+    try:
+        schedule = pd.read_csv(
+            os.path.join(os.path.dirname(MODEL_PATH), "../data/nhl_matches_2026.csv")
+        )
+
+        # only completed games
+        completed = schedule.dropna(subset=["Rslt"])
+        if completed.empty:
+            return {"accuracy": 0.571, "total": 0}
+
+        # get unique dates with completed games
+        completed["Date"] = pd.to_datetime(completed["Date"])
+        dates = completed["Date"].dt.strftime("%Y-%m-%d").unique()
+
+        correct = 0
+        total = 0
+
+        for date_str in dates:
+            predictions_df = predictor.predict_date(date_str)
+            if predictions_df is None:
+                continue
+
+            day_games = completed[
+                completed["Date"].dt.strftime("%Y-%m-%d") == date_str
+            ]
+
+            for _, pred_row in predictions_df.iterrows():
+                home = pred_row["Home"]
+                away = pred_row["Away"]
+                predicted_winner = pred_row["Predicted_Winner"]
+
+                # find actual result for this game
+                actual = day_games[
+                    (day_games["Team"] == home) | (day_games["Team"] == away)
+                ]
+
+                for _, actual_row in actual.iterrows():
+                    team = actual_row["Team"]
+                    rslt = actual_row["Rslt"]
+                    if rslt == "W":
+                        actual_winner = team
+                    else:
+                        actual_winner = away if team == home else home
+
+                    if predicted_winner == actual_winner:
+                        correct += 1
+                    total += 1
+                    break  # one row per game
+
+        accuracy = round(correct / total, 4) if total > 0 else 0.571
+        return {"accuracy": accuracy, "total": total}
+
+    except Exception as e:
+        print(f"  ⚠ Could not calculate season accuracy: {e}")
+        return {"accuracy": 0.571, "total": 0}
+
 
 def normalize_team_name(name: str) -> str:
     """Normalize accented characters so lookups always succeed."""
@@ -49,6 +111,11 @@ def normalize_team_name(name: str) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.predictor = NHLPredictor()
+    print("Calculating season accuracy...")
+    stats = calculate_season_accuracy(app.state.predictor)
+    app.state.season_accuracy = stats["accuracy"]
+    app.state.total_predictions = stats["total"]
+    print(f"✓ Season accuracy: {stats['accuracy']:.1%} over {stats['total']} games\n")
     yield
 
 
@@ -58,6 +125,7 @@ app = FastAPI(lifespan=lifespan)
 origins = [
     "http://localhost:5173",
     "http://localhost:8000",
+    "https://nhl-predictor-frontend.onrender.com",  # update after deploy
 ]
 
 app.add_middleware(
@@ -94,11 +162,10 @@ def get_status(request: Request):
         "model_last_trained": datetime.fromtimestamp(
             os.path.getmtime(MODEL_PATH)
         ).isoformat(),
-        "total_predictions": 0,
-        "season_accuracy": 0.571,
+        "total_predictions": request.app.state.total_predictions,
+        "season_accuracy": request.app.state.season_accuracy,
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
-
 
 @app.get("/results")
 def get_results(request: Request, date: str):
