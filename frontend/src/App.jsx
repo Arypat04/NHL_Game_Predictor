@@ -140,7 +140,7 @@ const filteredEdges = edges.filter(
   return (
     <div className="app">
       <header className="header">
-        <div className="header-logo">NHL <span>Predictor</span></div>
+        <div className="header-logo">Line <span>Lab</span></div>
         <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
           {theme === "dark" ? "☀ Light" : "☾ Dark"}
         </button>

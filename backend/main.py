@@ -125,7 +125,7 @@ app = FastAPI(lifespan=lifespan)
 origins = [
     "http://localhost:5173",
     "http://localhost:8000",
-    "https://nhl-predictor-frontend.onrender.com",  # update after deploy
+    "https://Line-Lab-frontend.onrender.com",  # update after deploy
 ]
 
 app.add_middleware(
