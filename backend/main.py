@@ -3,6 +3,10 @@ import requests
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from predictor import NHLPredictor, MODEL_PATH, TEAM_NAME_TO_ABBREV
+from database import (
+    get_db, log_predictions, log_results,
+    log_edges, get_season_stats
+)
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -10,7 +14,6 @@ import pandas as pd
 
 load_dotenv()
 
-# --- market registry ---
 MARKETS = {
     "moneyline": {
         "description": "NHL game winner predictions",
@@ -26,7 +29,6 @@ MARKETS = {
     }
 }
 
-# NHL API game state labels
 STATE_MAP = {
     "OFF":  "Final",
     "LIVE": "Live",
@@ -40,76 +42,29 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT         = "icehockey_nhl"
 NHL_API_BASE  = "https://api-web.nhle.com/v1"
 
-def calculate_season_accuracy(predictor) -> dict:
-    """
-    Calculate real current-season accuracy by comparing predictions
-    against completed game results from the 2026 schedule CSV.
-    """
-    try:
-        schedule = pd.read_csv(
-            os.path.join(os.path.dirname(MODEL_PATH), "../data/nhl_matches_2026.csv")
-        )
-
-        # only completed games
-        completed = schedule.dropna(subset=["Rslt"])
-        if completed.empty:
-            return {"accuracy": 0.571, "total": 0}
-
-        # get unique dates with completed games
-        completed["Date"] = pd.to_datetime(completed["Date"])
-        dates = completed["Date"].dt.strftime("%Y-%m-%d").unique()
-
-        correct = 0
-        total = 0
-
-        for date_str in dates:
-            predictions_df = predictor.predict_date(date_str)
-            if predictions_df is None:
-                continue
-
-            day_games = completed[
-                completed["Date"].dt.strftime("%Y-%m-%d") == date_str
-            ]
-
-            for _, pred_row in predictions_df.iterrows():
-                home = pred_row["Home"]
-                away = pred_row["Away"]
-                predicted_winner = pred_row["Predicted_Winner"]
-
-                # find actual result for this game
-                actual = day_games[
-                    (day_games["Team"] == home) | (day_games["Team"] == away)
-                ]
-
-                for _, actual_row in actual.iterrows():
-                    team = actual_row["Team"]
-                    rslt = actual_row["Rslt"]
-                    if rslt == "W":
-                        actual_winner = team
-                    else:
-                        actual_winner = away if team == home else home
-
-                    if predicted_winner == actual_winner:
-                        correct += 1
-                    total += 1
-                    break  # one row per game
-
-        accuracy = round(correct / total, 4) if total > 0 else 0.571
-        return {"accuracy": accuracy, "total": total}
-
-    except Exception as e:
-        print(f"  ⚠ Could not calculate season accuracy: {e}")
-        return {"accuracy": 0.571, "total": 0}
-
 
 def normalize_team_name(name: str) -> str:
-    """Normalize accented characters so lookups always succeed."""
     return name.replace("é", "e").replace("É", "E").replace("è", "e")
 
 
-# --- lifespan ---
+def calculate_season_accuracy(predictor) -> dict:
+    """Fallback accuracy calc from rolling_data if MongoDB unavailable."""
+    try:
+        db_stats = get_season_stats()
+        if db_stats and db_stats["total_predictions"] > 0:
+            return {
+                "accuracy": db_stats["season_accuracy"],
+                "total": db_stats["total_predictions"]
+            }
+        return {"accuracy": 0.0, "total": 0}
+    except Exception as e:
+        print(f"⚠ Could not calculate season accuracy: {e}")
+        return {"accuracy": 0.0, "total": 0}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_db()
     app.state.predictor = NHLPredictor()
     print("Calculating season accuracy...")
     stats = calculate_season_accuracy(app.state.predictor)
@@ -119,13 +74,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-# --- app init ---
 app = FastAPI(lifespan=lifespan)
 
 origins = [
     "http://localhost:5173",
     "http://localhost:8000",
-    "https://Line-Lab-frontend.onrender.com",  # update after deploy
+    "https://nhl-predictor-frontend.onrender.com",
 ]
 
 app.add_middleware(
@@ -136,10 +90,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @app.get("/")
 def root():
@@ -152,25 +102,28 @@ def get_predictions(request: Request, date: str):
     results = predictor.predict_date(date)
     if results is None:
         return []
-    return results.to_dict(orient="records")
+    data = results.to_dict(orient="records")
+    log_predictions(date, data)
+    return data
 
 
 @app.get("/status")
 def get_status(request: Request):
+    db_stats = get_season_stats()
     return {
         "status": "ok",
         "model_last_trained": datetime.fromtimestamp(
             os.path.getmtime(MODEL_PATH)
-        ).isoformat(),
-        "total_predictions": request.app.state.total_predictions,
-        "season_accuracy": request.app.state.season_accuracy,
+        ).isoformat() if os.path.exists(MODEL_PATH) else None,
+        "total_predictions": db_stats["total_predictions"] if db_stats else request.app.state.total_predictions,
+        "season_accuracy": db_stats["season_accuracy"] if db_stats else request.app.state.season_accuracy,
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
+
 
 @app.get("/results")
 def get_results(request: Request, date: str):
     resp = requests.get(f"{NHL_API_BASE}/score/{date}")
-
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail="NHL API error")
 
@@ -223,6 +176,7 @@ def get_results(request: Request, date: str):
             "Correct":          actual_winner == pred["Predicted_Winner"],
         })
 
+    log_results(date, results)
     return results
 
 
@@ -241,11 +195,11 @@ def get_edges(request: Request, date: str):
     resp = requests.get(
         f"{ODDS_API_BASE}/sports/{SPORT}/odds",
         params={
-            "apiKey":      api_key,
-            "regions":     "us",
-            "markets":     "h2h",
-            "oddsFormat":  "american",
-            "dateFormat":  "iso",
+            "apiKey":     api_key,
+            "regions":    "us",
+            "markets":    "h2h",
+            "oddsFormat": "american",
+            "dateFormat": "iso",
         },
     )
 
@@ -272,7 +226,6 @@ def get_edges(request: Request, date: str):
 
     edges = []
     for game in games_on_date:
-        # normalize accents BEFORE lookup
         home_full = normalize_team_name(game["home_team"])
         away_full = normalize_team_name(game["away_team"])
 
@@ -291,7 +244,6 @@ def get_edges(request: Request, date: str):
                 if market["key"] != "h2h":
                     continue
                 for outcome in market["outcomes"]:
-                    # normalize outcome names too for comparison
                     outcome_name = normalize_team_name(outcome["name"])
                     if outcome_name == home_full:
                         if best_home_odds is None or outcome["price"] > best_home_odds:
@@ -314,7 +266,6 @@ def get_edges(request: Request, date: str):
 
         home_model = pred["Home_Win_Prob"]
         away_model = pred["Away_Win_Prob"]
-
         home_edge = home_model - home_implied
         away_edge = away_model - away_implied
 
@@ -339,4 +290,5 @@ def get_edges(request: Request, date: str):
         })
 
     edges.sort(key=lambda x: x["Best_Edge"], reverse=True)
+    log_edges(date, edges)
     return edges
