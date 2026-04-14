@@ -48,29 +48,193 @@ def normalize_team_name(name: str) -> str:
 
 
 def calculate_season_accuracy(predictor) -> dict:
-    """Fallback accuracy calc from rolling_data if MongoDB unavailable."""
+    """
+    Calculate season accuracy from MongoDB games collection.
+    All keys are lowercase after _clean_doc fix.
+    """
     try:
-        db_stats = get_season_stats()
-        if db_stats and db_stats["total_predictions"] > 0:
-            return {
-                "accuracy": db_stats["season_accuracy"],
-                "total": db_stats["total_predictions"]
-            }
-        return {"accuracy": 0.0, "total": 0}
+        db = get_db()
+        if db is None:
+            return {"accuracy": 0.571, "total": 0}
+
+        print("  Loading completed 2026 games from MongoDB...")
+
+        # all keys lowercase — use lowercase field names
+        cursor = db["games"].find(
+            {"season": 2026, "rslt": {"$in": ["W", "L"]}},
+            {"_id": 0}
+        )
+
+        df = pd.DataFrame(list(cursor))
+
+        if df.empty:
+            print("  ⚠ No 2026 games found in MongoDB")
+            return {"accuracy": 0.571, "total": 0}
+
+        print(f"  Found {len(df):,} completed games")
+
+        # lowercase column names from mongo — map to what predictor expects
+        col_map = {
+            "date": "Date", "team": "Team", "rslt": "Rslt",
+            "home_away": "Home_Away", "opponent": "Opponent",
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        df["Date"] = pd.to_datetime(df["Date"])
+        df["date_str"] = df["Date"].dt.strftime("%Y-%m-%d")
+
+        dates = df["date_str"].unique()
+        correct = 0
+        total = 0
+
+        print(f"  Processing {len(dates)} dates...")
+
+        for date_str in dates:
+            predictions_df = predictor.predict_date(date_str)
+            if predictions_df is None:
+                continue
+
+            day_games = df[df["date_str"] == date_str]
+
+            for _, pred_row in predictions_df.iterrows():
+                home = pred_row["Home"]
+                away = pred_row["Away"]
+                predicted_winner = pred_row["Predicted_Winner"]
+
+                actual = day_games[
+                    (day_games["Team"] == home) | (day_games["Team"] == away)
+                ]
+
+                for _, actual_row in actual.iterrows():
+                    team = actual_row["Team"]
+                    rslt = actual_row["Rslt"]
+                    actual_winner = team if rslt == "W" else (away if team == home else home)
+
+                    if predicted_winner == actual_winner:
+                        correct += 1
+                    total += 1
+                    break
+
+        accuracy = round(correct / total, 4) if total > 0 else 0.571
+        print(f"  ✓ Accuracy: {accuracy:.2%} over {total} games")
+        return {"accuracy": accuracy, "total": total}
+
     except Exception as e:
-        print(f"⚠ Could not calculate season accuracy: {e}")
-        return {"accuracy": 0.0, "total": 0}
+        print(f"  ⚠ Could not calculate season accuracy: {e}")
+        return {"accuracy": 0.571, "total": 0}
+
+
+def backfill_results(predictor) -> None:
+    """
+    Populate MongoDB results collection from games already in MongoDB.
+    Runs at startup — skips dates already processed.
+    All field names are lowercase (after _clean_doc fix).
+    """
+    db = get_db()
+    if db is None:
+        return
+
+    print("Backfilling historical results into MongoDB...")
+
+    # lowercase field names
+    cursor = db["games"].find(
+        {"rslt": {"$in": ["W", "L"]}},
+        {"_id": 0}
+    )
+    games_list = list(cursor)
+
+    if not games_list:
+        print("  ⚠ No completed games found — run scraper first")
+        return
+
+    df = pd.DataFrame(games_list)
+
+    # rename lowercase mongo keys to usable names
+    col_map = {
+        "date": "Date", "team": "Team", "rslt": "Rslt",
+        "home_away": "Home_Away", "opponent": "Opponent",
+    }
+    df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    unique_dates = sorted(df["Date"].dt.strftime("%Y-%m-%d").unique())
+    total_added = 0
+
+    for date_str in unique_dates:
+        # skip if already processed
+        if db["results"].count_documents({"date": date_str}) > 0:
+            continue
+
+        predictions_df = predictor.predict_date(date_str)
+        if predictions_df is None:
+            continue
+
+        pred_lookup = {
+            "_".join(sorted([row["Home"], row["Away"]])): row
+            for _, row in predictions_df.iterrows()
+        }
+
+        day_games = df[df["Date"].dt.strftime("%Y-%m-%d") == date_str]
+        results = []
+
+        for _, game in day_games.iterrows():
+            team     = game["Team"]
+            rslt     = game["Rslt"]
+            home_away = game.get("Home_Away", "")
+            opponent  = game.get("Opponent", "")
+
+            home = team     if home_away == "Home" else opponent
+            away = opponent if home_away == "Home" else team
+
+            key  = "_".join(sorted([home, away]))
+            pred = pred_lookup.get(key)
+            if pred is None:
+                continue
+
+            actual_winner = home if rslt == "W" and home_away == "Home" else \
+                            away if rslt == "W" else \
+                            away if home_away == "Home" else home
+
+            results.append({
+                "Away":             away,
+                "Home":             home,
+                "Away_Score":       0,
+                "Home_Score":       0,
+                "Actual_Winner":    actual_winner,
+                "Predicted_Winner": pred["Predicted_Winner"],
+                "Home_Win_Rob":     pred["Home_Win_Prob"],
+                "Away_Win_Prob":    pred["Away_Win_Prob"],
+                "Correct":          actual_winner == pred["Predicted_Winner"],
+                "Status":           "Final",
+            })
+
+        if results:
+            log_results(date_str, results)
+            total_added += len(results)
+
+    print(f"✓ Backfill complete — {total_added} results added\n")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_db()
     app.state.predictor = NHLPredictor()
+
+    # backfill historical results first
+    backfill_results(app.state.predictor)
+
+    # then calculate accuracy from results collection
     print("Calculating season accuracy...")
-    stats = calculate_season_accuracy(app.state.predictor)
-    app.state.season_accuracy = stats["accuracy"]
-    app.state.total_predictions = stats["total"]
-    print(f"✓ Season accuracy: {stats['accuracy']:.1%} over {stats['total']} games\n")
+    db_stats = get_season_stats()
+    if db_stats and db_stats["total_predictions"] > 0:
+        app.state.season_accuracy   = db_stats["season_accuracy"]
+        app.state.total_predictions = db_stats["total_predictions"]
+    else:
+        # fallback to computing from games collection
+        stats = calculate_season_accuracy(app.state.predictor)
+        app.state.season_accuracy   = stats["accuracy"]
+        app.state.total_predictions = stats["total"]
+
+    print(f"✓ Season accuracy: {app.state.season_accuracy:.1%} over {app.state.total_predictions} games\n")
     yield
 
 
@@ -116,7 +280,7 @@ def get_status(request: Request):
             os.path.getmtime(MODEL_PATH)
         ).isoformat() if os.path.exists(MODEL_PATH) else None,
         "total_predictions": db_stats["total_predictions"] if db_stats else request.app.state.total_predictions,
-        "season_accuracy": db_stats["season_accuracy"] if db_stats else request.app.state.season_accuracy,
+        "season_accuracy":   db_stats["season_accuracy"]   if db_stats else request.app.state.season_accuracy,
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
 
@@ -157,7 +321,7 @@ def get_results(request: Request, date: str):
 
         actual_winner = home if home_score > away_score else away
 
-        key = "_".join(sorted([home, away]))
+        key  = "_".join(sorted([home, away]))
         pred = pred_lookup.get(key)
         if pred is None:
             continue
@@ -259,18 +423,17 @@ def get_edges(request: Request, date: str):
         home_implied = american_to_implied(best_home_odds)
         away_implied = american_to_implied(best_away_odds)
 
-        key = "_".join(sorted([home, away]))
+        key  = "_".join(sorted([home, away]))
         pred = pred_lookup.get(key)
         if pred is None:
             continue
 
         home_model = pred["Home_Win_Prob"]
         away_model = pred["Away_Win_Prob"]
-        home_edge = home_model - home_implied
-        away_edge = away_model - away_implied
-
-        best_bet  = "Home" if home_edge > away_edge else "Away"
-        best_edge = max(home_edge, away_edge)
+        home_edge  = home_model - home_implied
+        away_edge  = away_model - away_implied
+        best_bet   = "Home" if home_edge > away_edge else "Away"
+        best_edge  = max(home_edge, away_edge)
 
         edges.append({
             "Time":              pred["Time"],

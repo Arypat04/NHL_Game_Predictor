@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = 'https://linelab-backend.onrender.com';
 
 export async function getPredictions(date) {
     const response = await fetch(`${BASE_URL}/predictions?date=${date}`);

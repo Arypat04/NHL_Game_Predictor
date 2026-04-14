@@ -118,6 +118,10 @@ def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     available_cols = [c for c in ROLLING_STAT_COLS if c in df.columns]
     new_col_names: list[str] = []
 
+    # Convert columns to numeric safely
+    for col in available_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     global_medians = df[available_cols].median()
     df[available_cols] = (
         df.groupby("Team")[available_cols]

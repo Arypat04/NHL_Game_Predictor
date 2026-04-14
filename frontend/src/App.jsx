@@ -172,7 +172,7 @@ const filteredEdges = edges.filter(
           </>
         )}
 
-        {(isYesterday || (isToday && results.length > 0)) && (
+        {(results.length > 0) && (
           <>
             <p className="section-label">Results</p>
             <ResultsTable results={results} loading={resultsLoading} error={resultsError} />
