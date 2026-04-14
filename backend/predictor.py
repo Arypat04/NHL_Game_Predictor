@@ -1,13 +1,13 @@
 """
 NHL Game Predictor
 ------------------
-Trains an ensemble model on game logs pulled from MongoDB and predicts
-outcomes for any date in the current season schedule.
+Trains an ensemble model on historical game logs (2021–2025) and predicts
+outcomes for any date in the 2026 schedule.
 
 Model persistence via joblib:
-  - First run: trains all models, saves to models.pkl
-  - Subsequent runs: loads models.pkl instantly (~2-3 seconds)
-  - Retrains automatically when triggered (no CSV timestamp — use DELETE models.pkl)
+  - First run after a scrape: trains all models, saves to models.pkl
+  - Subsequent runs: loads models.pkl instantly (~2-3 seconds vs ~60 seconds)
+  - Retrains automatically when CSV is newer than saved model
 """
 
 import os
@@ -46,7 +46,6 @@ TEAM_NAME_TO_ABBREV: dict[str, str] = {
     "Los Angeles Kings": "LAK",
     "Minnesota Wild": "MIN",
     "Montreal Canadiens": "MTL",
-    "Montréal Canadiens": "MTL",
     "Nashville Predators": "NSH",
     "New Jersey Devils": "NJD",
     "New York Islanders": "NYI",
@@ -57,7 +56,6 @@ TEAM_NAME_TO_ABBREV: dict[str, str] = {
     "San Jose Sharks": "SJS",
     "Seattle Kraken": "SEA",
     "St. Louis Blues": "STL",
-    "St Louis Blues": "STL",
     "Tampa Bay Lightning": "TBL",
     "Toronto Maple Leafs": "TOR",
     "Utah Hockey Club": "UTA",
@@ -89,24 +87,30 @@ BASE_PREDICTORS = [
 # ---------------------------------------------------------------------------
 
 def _encode_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply categorical encoding and rest/fatigue features."""
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
+
     df["Arena_code"] = df["Home_Away"].astype("category").cat.codes
     df["Opponent_code"] = df["Opp"].astype("category").cat.codes
     df["Day_code"] = df["Date"].dt.dayofweek
     df["Team_code"] = df["Team"].astype("category").cat.codes
+
     if "OT" in df.columns:
         df["OT_code"] = df["OT"].astype("category").cat.codes + 1
     else:
         df["OT_code"] = 0
+
     df = df.sort_values(["Team", "Date"]).reset_index(drop=True)
     df["days_rest"] = df.groupby("Team")["Date"].diff().dt.days.fillna(2)
     df["back_to_back"] = (df["days_rest"] == 1).astype(int)
     df["well_rested"] = (df["days_rest"] >= 3).astype(int)
+
     return df
 
 
 def _encode_target(df: pd.DataFrame) -> pd.DataFrame:
+    """Add binary target column; drop rows with unknown outcomes."""
     if "Rslt" not in df.columns:
         return df
     mapping = {"W": 1, "L": 0}
@@ -115,13 +119,14 @@ def _encode_target(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Calculate rolling averages for multiple window sizes.
+    Uses explicit per-team loop to preserve all columns including non-numeric.
+    """
     available_cols = [c for c in ROLLING_STAT_COLS if c in df.columns]
     new_col_names: list[str] = []
 
-    # Convert columns to numeric safely
-    for col in available_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
+    # Fill NaNs in raw stat cols with per-team median, fall back to global
     global_medians = df[available_cols].median()
     df[available_cols] = (
         df.groupby("Team")[available_cols]
@@ -129,6 +134,7 @@ def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         .fillna(global_medians)
     )
 
+    # Loop per team — preserves all columns including non-numeric ones
     all_rolled = []
     for team, group in df.groupby("Team"):
         group = group.sort_values("Date").copy()
@@ -143,8 +149,10 @@ def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     for window in ROLLING_WINDOWS:
         new_col_names.extend([f"avg{window}_{c}" for c in available_cols])
 
+    # Drop rows where smallest window is still NaN (first 1-2 games of a team)
     df_rolled = df_rolled.dropna(subset=[f"avg{ROLLING_WINDOWS[0]}_{available_cols[0]}"])
 
+    # Backfill larger windows with smaller window values for early-season rows
     for col in available_cols:
         for i in range(1, len(ROLLING_WINDOWS)):
             big_col = f"avg{ROLLING_WINDOWS[i]}_{col}"
@@ -155,6 +163,7 @@ def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 
 
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
+    """Full feature engineering pipeline."""
     df = _encode_features(df)
     df = _encode_target(df)
     return df
@@ -165,6 +174,7 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def _build_models() -> dict:
+    """Return the three base models with tuned hyperparameters."""
     rf = RandomForestClassifier(
         n_estimators=726, max_depth=8, min_samples_split=7,
         min_samples_leaf=1, bootstrap=True, max_features=None,
@@ -184,6 +194,7 @@ def _build_models() -> dict:
     return {"rf": rf, "gb": gb, "xgb": xgb}
 
 
+# Ensemble weights — must sum to 1.0
 ENSEMBLE_WEIGHTS = {"rf": 0.2, "gb": 0.4, "xgb": 0.4}
 
 
@@ -193,51 +204,89 @@ ENSEMBLE_WEIGHTS = {"rf": 0.2, "gb": 0.4, "xgb": 0.4}
 
 class NHLPredictor:
     """
-    Train on game logs from MongoDB and predict future game outcomes.
+    Train on historical NHL game logs and predict future game outcomes.
 
-    To retrain: delete models.pkl and restart the server.
-    Model retrains from MongoDB data automatically.
+    Model persistence:
+      - Saves trained model to models.pkl after training
+      - Loads from models.pkl on subsequent startups (fast ~2-3s)
+      - Automatically retrains if CSV is newer than saved model
+
+    Usage
+    -----
+    predictor = NHLPredictor()
+    predictor.predict_date("2026-03-15")
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        train_file: str = os.path.join(BASE_DIR, "../data/nhl_matches_2021_2025.csv"),
+        schedule_file: str = os.path.join(BASE_DIR, "../data/nhl_matches_2026.csv"),
+    ):
+        self.train_file = train_file
+        self.schedule_file = schedule_file
         self.models: dict = {}
         self.predictors: list[str] = []
         self._team_code_map: dict[str, int] = {}
         self._rolling_data: pd.DataFrame = pd.DataFrame()
         self._schedule: pd.DataFrame = pd.DataFrame()
+
         self._load_and_train()
 
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
+
     def _should_retrain(self) -> bool:
-        return not os.path.exists(MODEL_PATH)
+        """
+        Returns True if we need to retrain.
+        Retrains if:
+          - No saved model exists yet
+          - Training CSV is newer than the saved model
+        """
+        if not os.path.exists(MODEL_PATH):
+            return True
+        csv_modified = os.path.getmtime(self.train_file)
+        model_modified = os.path.getmtime(MODEL_PATH)
+        return csv_modified > model_modified
 
     def _load_and_train(self) -> None:
         if self._should_retrain():
-            print("No saved model found — training from MongoDB...")
+            print("Training data is newer than saved model — retraining...")
             self._train_and_save()
         else:
             print("Loading saved model...")
             self._load_saved()
             print("✓ Model loaded.\n")
+
+        # Always reload the schedule fresh — games are added daily
         self._load_schedule()
 
     def _train_and_save(self) -> None:
-        from database import get_training_data
-        print("  Loading training data from MongoDB...")
-        train_raw = get_training_data()
+        """Train all models and save to disk."""
+        print("  Loading and preparing data...")
+        train_raw = pd.read_csv(self.train_file)
 
-        if train_raw.empty:
-            raise RuntimeError(
-                "No training data found in MongoDB. "
-                "Run scraper.py first to populate the database."
-            )
+        # Append completed current-season games so the model learns
+        # from 2026 results as they accumulate throughout the season.
+        try:
+            current_raw = pd.read_csv(self.schedule_file)
+            if "Rslt" in current_raw.columns:
+                completed = current_raw.dropna(subset=["Rslt"])
+                if not completed.empty:
+                    if "Opponent" in completed.columns and "Opp" not in completed.columns:
+                        completed = completed.rename(columns={"Opponent": "Opp"})
+                    train_raw = pd.concat([train_raw, completed], ignore_index=True)
+                    print(f"  Added {len(completed):,} completed 2026 games to training data")
+        except Exception as e:
+            print(f"  Could not load current season data: {e}")
 
-        print(f"  Loaded {len(train_raw):,} game rows")
         train_prepared = prepare(train_raw)
 
         print("  Calculating rolling averages...")
         train_rolled, rolling_cols = _rolling_averages(train_prepared)
         self._rolling_data = train_rolled
 
+        # Build stable team → code mapping
         self._team_code_map = (
             train_rolled[["Team", "Team_code"]]
             .drop_duplicates()
@@ -247,6 +296,7 @@ class NHLPredictor:
 
         self.predictors = BASE_PREDICTORS + rolling_cols
 
+        # Fit models
         X = train_rolled[self.predictors]
         y = train_rolled["target"]
 
@@ -257,6 +307,7 @@ class NHLPredictor:
             calibrated.fit(X, y)
             self.models[name] = calibrated
 
+        # Save everything needed for future loads
         print("  Saving model to disk...")
         joblib.dump({
             "models": self.models,
@@ -264,9 +315,11 @@ class NHLPredictor:
             "team_code_map": self._team_code_map,
             "rolling_data": self._rolling_data,
         }, MODEL_PATH)
+
         print("✓ Model trained and saved.\n")
 
     def _load_saved(self) -> None:
+        """Load previously trained model from disk."""
         saved = joblib.load(MODEL_PATH)
         self.models = saved["models"]
         self.predictors = saved["predictors"]
@@ -274,26 +327,21 @@ class NHLPredictor:
         self._rolling_data = saved["rolling_data"]
 
     def _load_schedule(self) -> None:
-        from database import get_schedule_df
-        schedule = get_schedule_df()
-
-        if schedule.empty:
-            print("⚠ No schedule data in MongoDB")
-            self._schedule = pd.DataFrame()
-            return
-
+        """Load the 2026 schedule — always fresh."""
+        schedule = pd.read_csv(self.schedule_file)
         schedule["Date"] = pd.to_datetime(schedule["Date"])
-        schedule["Team"] = schedule["Team"].replace("VEG", "VGK")
+        schedule["Opp_abbrev"] = schedule["Opponent"].map(TEAM_NAME_TO_ABBREV)
 
-        if "Opponent" in schedule.columns:
-            schedule["Opponent"] = schedule["Opponent"].str.replace("é", "e").str.replace("É", "E")
-            schedule["Opp_abbrev"] = schedule["Opponent"].map(TEAM_NAME_TO_ABBREV)
-            missing = schedule["Opp_abbrev"].isna().sum()
-            if missing:
-                unknown = schedule.loc[schedule["Opp_abbrev"].isna(), "Opponent"].unique()
-                print(f"  ⚠ {missing} schedule rows unmapped: {unknown}")
+        missing = schedule["Opp_abbrev"].isna().sum()
+        if missing:
+            unknown = schedule.loc[schedule["Opp_abbrev"].isna(), "Opponent"].unique()
+            print(f"  ⚠ {missing} schedule rows have unmapped opponent names: {unknown}")
 
         self._schedule = schedule
+
+    # ------------------------------------------------------------------
+    # Prediction helpers
+    # ------------------------------------------------------------------
 
     def _latest_stats(self, team: str, before_date: pd.Timestamp) -> pd.Series | None:
         rows = self._rolling_data[
@@ -313,7 +361,14 @@ class NHLPredictor:
             prob += model.predict_proba(feature_row)[:, 1][0] * ENSEMBLE_WEIGHTS[name]
         return float(prob)
 
-    def _build_feature_row(self, team_stats, opponent_abbrev, home_away, game_date, rolling_cols):
+    def _build_feature_row(
+        self,
+        team_stats: pd.Series,
+        opponent_abbrev: str,
+        home_away: str,
+        game_date: pd.Timestamp,
+        rolling_cols: list[str],
+    ) -> pd.DataFrame:
         row: dict = {
             "Team_code": [team_stats["Team_code"]],
             "Opponent_code": [self._team_code(opponent_abbrev)],
@@ -328,21 +383,31 @@ class NHLPredictor:
             row[col] = [team_stats.get(col, np.nan)]
         return pd.DataFrame(row)[self.predictors]
 
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
     def predict_date(self, date_str: str) -> pd.DataFrame | None:
+        """
+        Predict all games scheduled for a given date.
+
+        Parameters
+        ----------
+        date_str : str
+            Date in 'YYYY-MM-DD' format, or 'today'.
+        """
         if date_str.lower() == "today":
             target_date = pd.Timestamp.now().normalize()
         else:
             try:
                 target_date = pd.to_datetime(date_str)
             except Exception:
-                print(f"Invalid date format '{date_str}'.")
+                print(f"Invalid date format '{date_str}'. Use YYYY-MM-DD or 'today'.")
                 return None
-
-        if self._schedule.empty:
-            return None
 
         games_today = self._schedule[self._schedule["Date"] == target_date].copy()
         if games_today.empty:
+            print(f"No games scheduled for {target_date.date()}.")
             return None
 
         rolling_cols = [c for c in self.predictors if c not in BASE_PREDICTORS]
@@ -350,13 +415,15 @@ class NHLPredictor:
 
         for _, game in games_today.iterrows():
             team = game["Team"]
-            opp_abbrev = game.get("Opp_abbrev") or TEAM_NAME_TO_ABBREV.get(game.get("Opponent", ""))
+            opp_abbrev = game.get("Opp_abbrev") or TEAM_NAME_TO_ABBREV.get(game["Opponent"])
 
             if not opp_abbrev:
+                print(f"  ⚠ Could not resolve opponent for {team} — skipping.")
                 continue
 
             team_stats = self._latest_stats(team, target_date)
             if team_stats is None:
+                print(f"  ⚠ No historical stats for {team} — skipping.")
                 continue
 
             features = self._build_feature_row(
@@ -383,6 +450,7 @@ class NHLPredictor:
             })
 
         if not predictions:
+            print("No predictions could be generated (missing stats for all teams).")
             return None
 
         df = pd.DataFrame(predictions)
@@ -393,8 +461,23 @@ class NHLPredictor:
             .sort_values("Time")
             .reset_index(drop=True)
         )
+
+        display_df = df.copy()
+        for col in ["Home_Win_Prob", "Away_Win_Prob", "Confidence"]:
+            display_df[col] = display_df[col].map(lambda x: f"{x:.1%}")
+
+        print(f"\n{'='*72}")
+        print(f"  NHL PREDICTIONS — {target_date.strftime('%A, %B %d, %Y')}")
+        print(f"{'='*72}\n")
+        print(display_df.to_string(index=False))
+        print(f"\n{'='*72}\n")
+
         return df
 
+
+# ---------------------------------------------------------------------------
+# Convenience entry point
+# ---------------------------------------------------------------------------
 
 def predict_games(date: str = "today") -> pd.DataFrame | None:
     predictor = NHLPredictor()

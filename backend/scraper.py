@@ -1,31 +1,31 @@
 """
 NHL Game Log Scraper
 --------------------
-Scrapes game log data from Hockey-Reference and writes directly to MongoDB.
+Scrapes game log data for all NHL teams from Hockey-Reference.com.
 
-Two operations:
-  scrape_training_seasons() — historical data (2021-2025), goes to games collection
-  scrape_current_season()   — current season, games go to games collection,
-                              schedule (unplayed) goes to schedule collection
+Produces two CSVs:
+  - nhl_matches_2021_2025.csv  (training data, full stats)
+  - nhl_matches_2026.csv       (current season, full stats + Rslt column)
 
-Run weekly to keep data fresh. The model retrains automatically on next
-server start when MongoDB data is newer than models.pkl.
+Column rename (.1 → _OPP) is applied once here at save time so all
+downstream code receives clean column names.
 """
 
 import os
 import time
 import random
-from datetime import datetime
 
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
 from io import StringIO
-from dotenv import load_dotenv
-
-load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "../data")
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 HEADERS = {
     "User-Agent": (
@@ -36,8 +36,13 @@ HEADERS = {
 }
 
 BASE_URL = "https://www.hockey-reference.com"
-RELOCATION_MAP = {"ARI": "UTA",
-                  "VEG":"VGK"}
+
+RELOCATION_MAP = {
+    "ARI": "UTA",
+    "VEG": "VGK",
+}
+
+
 TRAINING_SEASONS = list(range(2021, 2026))
 CURRENT_SEASON = 2026
 
@@ -52,6 +57,7 @@ def polite_get(url: str, pause: tuple = (2, 5)) -> requests.Response:
 
 
 def rename_opp_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Safety net rename — flatten_multiindex handles most cases directly."""
     return df.rename(
         columns={
             col: col.replace(".1", "_OPP")
@@ -68,6 +74,7 @@ def fix_home_away(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def flatten_multiindex(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse two-row headers. Opponent stats get _OPP suffix directly."""
     if not isinstance(df.columns, pd.MultiIndex):
         return df
     new_cols = []
@@ -75,6 +82,7 @@ def flatten_multiindex(df: pd.DataFrame) -> pd.DataFrame:
         top, bottom = str(col[0]), str(col[1])
         top_unnamed = "Unnamed" in top
         bottom_unnamed = "Unnamed" in bottom or not bottom
+
         if not top_unnamed and top == "Opponent" and not bottom_unnamed:
             new_cols.append(f"{bottom}_OPP")
         elif not bottom_unnamed:
@@ -93,7 +101,10 @@ def strip_header_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def derive_rslt(df: pd.DataFrame) -> pd.DataFrame:
-    """Derive W/L result from GF and GA for current season games."""
+    """
+    Derive a Rslt column (W/L) from GF and GA for the current season CSV.
+    Rows without scores (future games) get None.
+    """
     df = df.copy()
     df["Rslt"] = None
     if "GF" in df.columns and "GA" in df.columns:
@@ -109,10 +120,12 @@ def get_team_urls(year: int) -> list[str]:
     standings_url = f"{BASE_URL}/leagues/NHL_{year}.html"
     print(f"Fetching standings for {year}...")
     resp = polite_get(standings_url, pause=(1, 3))
+
     soup = BeautifulSoup(resp.text, "html.parser")
     comments = soup.find_all(string=lambda t: isinstance(t, Comment))
     comment_soup = BeautifulSoup("".join(comments), "html.parser")
     standings_table = comment_soup.select("table")[0]
+
     links = [
         a.get("href")
         for a in standings_table.find_all("a")
@@ -127,7 +140,7 @@ def team_abbrev_from_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Training data scraper (2021-2025)
+# Training data scraper (2021–2025)
 # ---------------------------------------------------------------------------
 
 def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame:
@@ -175,12 +188,7 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
 # Current season scraper (2026)
 # ---------------------------------------------------------------------------
 
-def scrape_current_season(year: int = CURRENT_SEASON) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns two DataFrames:
-      completed — games with results (goes to games collection)
-      scheduled — future games (goes to schedule collection)
-    """
+def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
     team_urls = get_team_urls(year)
     all_frames = []
 
@@ -210,19 +218,17 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> tuple[pd.DataFrame, pd.
         df = flatten_multiindex(df)
         df = fix_home_away(df)
         df = strip_header_rows(df)
+
+        # derive Rslt from GF/GA so completed games can feed back into training
         df = derive_rslt(df)
+
         df["Season"] = year
         df["Team"] = team
         all_frames.append(df)
 
     combined = pd.concat(all_frames, ignore_index=True)
     combined = rename_opp_columns(combined)
-
-    # split into completed and scheduled
-    completed = combined[combined["Rslt"].notna()].copy()
-    scheduled = combined[combined["Rslt"].isna()].copy()
-
-    return completed, scheduled
+    return combined
 
 
 # ---------------------------------------------------------------------------
@@ -230,25 +236,20 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> tuple[pd.DataFrame, pd.
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from database import get_db, upsert_games, upsert_schedule
-
-    db = get_db()
-    if db is None:
-        print("❌ Cannot connect to MongoDB — check MONGODB_URI in .env")
-        exit(1)
-
-    print("=== Scraping training seasons (2021-2025) ===")
+    print("=== Scraping training seasons (2021–2025) ===")
     training_df = scrape_training_seasons()
-    count = upsert_games(training_df)
-    print(f"✓ Upserted {count:,} training game rows to MongoDB\n")
+    out_path = os.path.join(DATA_DIR, "nhl_matches_2021_2025.csv")
+    training_df.to_csv(out_path, index=False)
+    print(f"✓ Saved {out_path} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)\n")
 
     print("=== Scraping current season (2026) ===")
-    completed_df, scheduled_df = scrape_current_season()
-    count_games = upsert_games(completed_df)
-    count_schedule = upsert_schedule(scheduled_df)
-    print(f"✓ Upserted {count_games:,} completed 2026 games to games collection")
-    print(f"✓ Upserted {count_schedule:,} upcoming games to schedule collection\n")
+    current_df = scrape_current_season()
+    out_path = os.path.join(DATA_DIR, "nhl_matches_2026.csv")
+    current_df.to_csv(out_path, index=False)
+    print(f"✓ Saved {out_path} ({len(current_df):,} rows, {current_df['Team'].nunique()} teams)\n")
 
     print("=== Done ===")
-    print(f"Total training games in DB: {db['games'].count_documents({})}")
-    print(f"Total scheduled games in DB: {db['schedule'].count_documents({})}")
+    print(f"Training columns : {training_df.columns.tolist()}")
+    print(f"Current  columns : {current_df.columns.tolist()}")
+    rslt_count = current_df["Rslt"].notna().sum() if "Rslt" in current_df.columns else 0
+    print(f"Completed 2026 games with Rslt: {rslt_count:,}")
