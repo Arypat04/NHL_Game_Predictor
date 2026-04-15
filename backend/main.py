@@ -16,17 +16,16 @@ MARKETS = {
         "description": "NHL game winner predictions",
         "model":       NHLPredictor,
         "odds_market": "h2h",
-        "active":      True
+        "active":      True,
     },
     "player_props": {
         "description": "Player prop predictions",
         "model":       None,
         "odds_market": "player_points",
-        "active":      False
-    }
+        "active":      False,
+    },
 }
 
-# NHL API game state labels
 STATE_MAP = {
     "OFF":  "Final",
     "LIVE": "Live",
@@ -40,59 +39,73 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT         = "icehockey_nhl"
 NHL_API_BASE  = "https://api-web.nhle.com/v1"
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def normalize_team_name(name: str) -> str:
+    return name.replace("é", "e").replace("É", "E").replace("è", "e")
+
+
+def american_to_implied(odds: int) -> float:
+    if odds > 0:
+        return 100 / (odds + 100)
+    return abs(odds) / (abs(odds) + 100)
+
+
 def calculate_season_accuracy(predictor) -> dict:
     """
-    Calculate real current-season accuracy by comparing predictions
-    against completed game results from the 2026 schedule CSV.
+    Calculate real current-season accuracy.
+    Uses MongoDB results collection if available, else falls back to CSV.
     """
-    try:
-        schedule = pd.read_csv(
-            os.path.join(os.path.dirname(MODEL_PATH), "../data/nhl_matches_2026.csv")
-        )
+    # Try MongoDB first
+    if os.getenv("MONGODB_URI"):
+        try:
+            from database import get_season_stats
+            stats = get_season_stats()
+            if stats and stats["total_predictions"] > 0:
+                print(f"  Using MongoDB stats: {stats['season_accuracy']:.1%} over {stats['total_predictions']} games")
+                return {"accuracy": stats["season_accuracy"], "total": stats["total_predictions"]}
+        except Exception as e:
+            print(f"  ⚠ MongoDB stats failed: {e} — falling back to CSV calculation")
 
-        # only completed games
+    # CSV fallback
+    try:
+        schedule_path = os.path.join(os.path.dirname(MODEL_PATH), "../data/nhl_matches_2026.csv")
+        schedule = pd.read_csv(schedule_path)
         completed = schedule.dropna(subset=["Rslt"])
         if completed.empty:
             return {"accuracy": 0.571, "total": 0}
 
-        # get unique dates with completed games
         completed["Date"] = pd.to_datetime(completed["Date"])
         dates = completed["Date"].dt.strftime("%Y-%m-%d").unique()
 
         correct = 0
-        total = 0
+        total   = 0
 
         for date_str in dates:
             predictions_df = predictor.predict_date(date_str)
             if predictions_df is None:
                 continue
 
-            day_games = completed[
-                completed["Date"].dt.strftime("%Y-%m-%d") == date_str
-            ]
+            day_games = completed[completed["Date"].dt.strftime("%Y-%m-%d") == date_str]
 
             for _, pred_row in predictions_df.iterrows():
-                home = pred_row["Home"]
-                away = pred_row["Away"]
+                home             = pred_row["Home"]
+                away             = pred_row["Away"]
                 predicted_winner = pred_row["Predicted_Winner"]
 
-                # find actual result for this game
-                actual = day_games[
-                    (day_games["Team"] == home) | (day_games["Team"] == away)
-                ]
+                actual = day_games[(day_games["Team"] == home) | (day_games["Team"] == away)]
 
                 for _, actual_row in actual.iterrows():
                     team = actual_row["Team"]
                     rslt = actual_row["Rslt"]
-                    if rslt == "W":
-                        actual_winner = team
-                    else:
-                        actual_winner = away if team == home else home
-
+                    actual_winner = team if rslt == "W" else (away if team == home else home)
                     if predicted_winner == actual_winner:
                         correct += 1
                     total += 1
-                    break  # one row per game
+                    break
 
         accuracy = round(correct / total, 4) if total > 0 else 0.571
         return {"accuracy": accuracy, "total": total}
@@ -102,35 +115,38 @@ def calculate_season_accuracy(predictor) -> dict:
         return {"accuracy": 0.571, "total": 0}
 
 
-def normalize_team_name(name: str) -> str:
-    """Normalize accented characters so lookups always succeed."""
-    return name.replace("é", "e").replace("É", "E").replace("è", "e")
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
 
-
-# --- lifespan ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.predictor = NHLPredictor()
     print("Calculating season accuracy...")
     stats = calculate_season_accuracy(app.state.predictor)
-    app.state.season_accuracy = stats["accuracy"]
-    app.state.total_predictions = stats["total"]
+    app.state.season_accuracy    = stats["accuracy"]
+    app.state.total_predictions  = stats["total"]
     print(f"✓ Season accuracy: {stats['accuracy']:.1%} over {stats['total']} games\n")
     yield
 
 
-# --- app init ---
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
 app = FastAPI(lifespan=lifespan)
 
-origins = [
+# Build allowed origins — always include localhost, add production URL from env
+_origins = [
     "http://localhost:5173",
     "http://localhost:8000",
-    "https://Line-Lab-frontend.onrender.com",  # update after deploy
 ]
+if os.getenv("FRONTEND_URL"):
+    _origins.append(os.getenv("FRONTEND_URL"))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -149,28 +165,38 @@ def root():
 @app.get("/predictions")
 def get_predictions(request: Request, date: str):
     predictor = request.app.state.predictor
-    results = predictor.predict_date(date)
+    results   = predictor.predict_date(date)
     if results is None:
         return []
-    return results.to_dict(orient="records")
+    payload = results.to_dict(orient="records")
+
+    # log to MongoDB if available
+    if os.getenv("MONGODB_URI"):
+        try:
+            from database import log_predictions
+            log_predictions(date, payload)
+        except Exception:
+            pass
+
+    return payload
 
 
 @app.get("/status")
 def get_status(request: Request):
     return {
-        "status": "ok",
+        "status":            "ok",
         "model_last_trained": datetime.fromtimestamp(
             os.path.getmtime(MODEL_PATH)
         ).isoformat(),
         "total_predictions": request.app.state.total_predictions,
-        "season_accuracy": request.app.state.season_accuracy,
+        "season_accuracy":   request.app.state.season_accuracy,
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
+
 
 @app.get("/results")
 def get_results(request: Request, date: str):
     resp = requests.get(f"{NHL_API_BASE}/score/{date}")
-
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail="NHL API error")
 
@@ -178,7 +204,7 @@ def get_results(request: Request, date: str):
     if not games:
         return []
 
-    predictor = request.app.state.predictor
+    predictor      = request.app.state.predictor
     predictions_df = predictor.predict_date(date)
     if predictions_df is None:
         return []
@@ -204,7 +230,7 @@ def get_results(request: Request, date: str):
 
         actual_winner = home if home_score > away_score else away
 
-        key = "_".join(sorted([home, away]))
+        key  = "_".join(sorted([home, away]))
         pred = pred_lookup.get(key)
         if pred is None:
             continue
@@ -223,13 +249,15 @@ def get_results(request: Request, date: str):
             "Correct":          actual_winner == pred["Predicted_Winner"],
         })
 
+    # log to MongoDB if available
+    if os.getenv("MONGODB_URI") and results:
+        try:
+            from database import log_results
+            log_results(date, results)
+        except Exception:
+            pass
+
     return results
-
-
-def american_to_implied(odds: int) -> float:
-    if odds > 0:
-        return 100 / (odds + 100)
-    return abs(odds) / (abs(odds) + 100)
 
 
 @app.get("/edges")
@@ -241,14 +269,13 @@ def get_edges(request: Request, date: str):
     resp = requests.get(
         f"{ODDS_API_BASE}/sports/{SPORT}/odds",
         params={
-            "apiKey":      api_key,
-            "regions":     "us",
-            "markets":     "h2h",
-            "oddsFormat":  "american",
-            "dateFormat":  "iso",
+            "apiKey":     api_key,
+            "regions":    "us",
+            "markets":    "h2h",
+            "oddsFormat": "american",
+            "dateFormat": "iso",
         },
     )
-
     if resp.status_code != 200:
         raise HTTPException(status_code=resp.status_code, detail="Odds API error")
 
@@ -256,11 +283,10 @@ def get_edges(request: Request, date: str):
         g for g in resp.json()
         if g.get("commence_time", "")[:10] == date
     ]
-
     if not games_on_date:
         return []
 
-    predictor = request.app.state.predictor
+    predictor      = request.app.state.predictor
     predictions_df = predictor.predict_date(date)
     if predictions_df is None:
         return []
@@ -272,13 +298,11 @@ def get_edges(request: Request, date: str):
 
     edges = []
     for game in games_on_date:
-        # normalize accents BEFORE lookup
         home_full = normalize_team_name(game["home_team"])
         away_full = normalize_team_name(game["away_team"])
 
         home = TEAM_NAME_TO_ABBREV.get(home_full)
         away = TEAM_NAME_TO_ABBREV.get(away_full)
-
         if not home or not away:
             continue
 
@@ -291,7 +315,6 @@ def get_edges(request: Request, date: str):
                 if market["key"] != "h2h":
                     continue
                 for outcome in market["outcomes"]:
-                    # normalize outcome names too for comparison
                     outcome_name = normalize_team_name(outcome["name"])
                     if outcome_name == home_full:
                         if best_home_odds is None or outcome["price"] > best_home_odds:
@@ -307,19 +330,17 @@ def get_edges(request: Request, date: str):
         home_implied = american_to_implied(best_home_odds)
         away_implied = american_to_implied(best_away_odds)
 
-        key = "_".join(sorted([home, away]))
+        key  = "_".join(sorted([home, away]))
         pred = pred_lookup.get(key)
         if pred is None:
             continue
 
         home_model = pred["Home_Win_Prob"]
         away_model = pred["Away_Win_Prob"]
-
-        home_edge = home_model - home_implied
-        away_edge = away_model - away_implied
-
-        best_bet  = "Home" if home_edge > away_edge else "Away"
-        best_edge = max(home_edge, away_edge)
+        home_edge  = home_model - home_implied
+        away_edge  = away_model - away_implied
+        best_bet   = "Home" if home_edge > away_edge else "Away"
+        best_edge  = max(home_edge, away_edge)
 
         edges.append({
             "Time":              pred["Time"],
@@ -339,4 +360,13 @@ def get_edges(request: Request, date: str):
         })
 
     edges.sort(key=lambda x: x["Best_Edge"], reverse=True)
+
+    # log to MongoDB if available
+    if os.getenv("MONGODB_URI") and edges:
+        try:
+            from database import log_edges
+            log_edges(date, edges)
+        except Exception:
+            pass
+
     return edges

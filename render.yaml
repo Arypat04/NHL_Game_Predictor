@@ -1,0 +1,31 @@
+services:
+
+  # ── Backend ──────────────────────────────────────────────────────────
+  - type: web
+    name: nhl-predictor-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: model-storage
+      mountPath: /opt/render/project/src/backend
+      sizeGB: 1
+    envVars:
+      - key: ODDS_API_KEY
+        sync: false          # set manually in Render dashboard
+      - key: MONGODB_URI
+        sync: false          # set manually in Render dashboard
+      - key: FRONTEND_URL
+        sync: false          # set after frontend deploys
+
+  # ── Frontend ─────────────────────────────────────────────────────────
+  - type: web
+    name: nhl-predictor-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false          # set to backend URL after backend deploys
