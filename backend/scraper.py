@@ -3,12 +3,11 @@ NHL Game Log Scraper
 --------------------
 Scrapes game log data for all NHL teams from Hockey-Reference.com.
 
-Produces two CSVs:
-  - nhl_matches_2021_2025.csv  (training data, full stats)
-  - nhl_matches_2026.csv       (current season, full stats + Rslt column)
+Writes to MongoDB if MONGODB_URI is set, otherwise saves to CSV files.
 
-Column rename (.1 → _OPP) is applied once here at save time so all
-downstream code receives clean column names.
+Produces two datasets:
+  - Training data (2021-2025) — full stats with Rslt column
+  - Current season (2026)    — full stats + derived Rslt column
 """
 
 import os
@@ -19,6 +18,9 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
 from io import StringIO
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "../data")
@@ -42,9 +44,8 @@ RELOCATION_MAP = {
     "VEG": "VGK",
 }
 
-
 TRAINING_SEASONS = list(range(2021, 2026))
-CURRENT_SEASON = 2026
+CURRENT_SEASON   = 2026
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +58,8 @@ def polite_get(url: str, pause: tuple = (2, 5)) -> requests.Response:
 
 
 def rename_opp_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Safety net rename — flatten_multiindex handles most cases directly."""
     return df.rename(
-        columns={
-            col: col.replace(".1", "_OPP")
-            for col in df.columns
-            if str(col).endswith(".1")
-        }
+        columns={col: col.replace(".1", "_OPP") for col in df.columns if str(col).endswith(".1")}
     )
 
 
@@ -74,15 +70,13 @@ def fix_home_away(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def flatten_multiindex(df: pd.DataFrame) -> pd.DataFrame:
-    """Collapse two-row headers. Opponent stats get _OPP suffix directly."""
     if not isinstance(df.columns, pd.MultiIndex):
         return df
     new_cols = []
     for i, col in enumerate(df.columns):
-        top, bottom = str(col[0]), str(col[1])
-        top_unnamed = "Unnamed" in top
+        top, bottom   = str(col[0]), str(col[1])
+        top_unnamed   = "Unnamed" in top
         bottom_unnamed = "Unnamed" in bottom or not bottom
-
         if not top_unnamed and top == "Opponent" and not bottom_unnamed:
             new_cols.append(f"{bottom}_OPP")
         elif not bottom_unnamed:
@@ -101,15 +95,12 @@ def strip_header_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def derive_rslt(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Derive a Rslt column (W/L) from GF and GA for the current season CSV.
-    Rows without scores (future games) get None.
-    """
+    """Derive W/L from GF and GA for current season rows."""
     df = df.copy()
     df["Rslt"] = None
     if "GF" in df.columns and "GA" in df.columns:
-        gf = pd.to_numeric(df["GF"], errors="coerce")
-        ga = pd.to_numeric(df["GA"], errors="coerce")
+        gf   = pd.to_numeric(df["GF"], errors="coerce")
+        ga   = pd.to_numeric(df["GA"], errors="coerce")
         mask = gf.notna() & ga.notna()
         df.loc[mask & (gf > ga), "Rslt"] = "W"
         df.loc[mask & (gf < ga), "Rslt"] = "L"
@@ -119,13 +110,11 @@ def derive_rslt(df: pd.DataFrame) -> pd.DataFrame:
 def get_team_urls(year: int) -> list[str]:
     standings_url = f"{BASE_URL}/leagues/NHL_{year}.html"
     print(f"Fetching standings for {year}...")
-    resp = polite_get(standings_url, pause=(1, 3))
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-    comments = soup.find_all(string=lambda t: isinstance(t, Comment))
+    resp  = polite_get(standings_url, pause=(1, 3))
+    soup  = BeautifulSoup(resp.text, "html.parser")
+    comments     = soup.find_all(string=lambda t: isinstance(t, Comment))
     comment_soup = BeautifulSoup("".join(comments), "html.parser")
     standings_table = comment_soup.select("table")[0]
-
     links = [
         a.get("href")
         for a in standings_table.find_all("a")
@@ -139,6 +128,26 @@ def team_abbrev_from_url(url: str) -> str:
     return RELOCATION_MAP.get(abbrev, abbrev)
 
 
+def save_df(df: pd.DataFrame, collection: str, csv_path: str) -> None:
+    """Write to MongoDB if available, always write CSV as local backup."""
+    # Always save CSV locally
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    df.to_csv(csv_path, index=False)
+    print(f"  ✓ CSV saved: {csv_path} ({len(df):,} rows)")
+
+    # Write to MongoDB if configured
+    if os.getenv("MONGODB_URI"):
+        try:
+            from database import upsert_games, upsert_schedule
+            if collection == "games":
+                n = upsert_games(df)
+            else:
+                n = upsert_schedule(df)
+            print(f"  ✓ MongoDB {collection}: {n:,} rows upserted")
+        except Exception as e:
+            print(f"  ⚠ MongoDB write failed: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Training data scraper (2021–2025)
 # ---------------------------------------------------------------------------
@@ -150,9 +159,9 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
         team_urls = get_team_urls(year)
 
         for team_url in team_urls:
-            base = team_url.replace(".html", "")
-            team = team_abbrev_from_url(team_url)
-            gamelog_url = f"{base}_gamelog.html"
+            base         = team_url.replace(".html", "")
+            team         = team_abbrev_from_url(team_url)
+            gamelog_url  = f"{base}_gamelog.html"
 
             print(f"  Fetching {team} ({year})")
             resp = polite_get(gamelog_url)
@@ -162,12 +171,8 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
                 continue
 
             try:
-                tables = pd.read_html(
-                    StringIO(resp.text),
-                    attrs={"id": "team_games"},
-                    flavor="lxml",
-                )
-                df = tables[0]
+                tables = pd.read_html(StringIO(resp.text), attrs={"id": "team_games"}, flavor="lxml")
+                df     = tables[0]
             except ValueError:
                 print(f"  ⚠ No table found for {team} ({year})")
                 continue
@@ -176,7 +181,7 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
             df = fix_home_away(df)
             df = strip_header_rows(df)
             df["Season"] = year
-            df["Team"] = team
+            df["Team"]   = team
             all_frames.append(df)
 
     combined = pd.concat(all_frames, ignore_index=True)
@@ -189,12 +194,12 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
 # ---------------------------------------------------------------------------
 
 def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
-    team_urls = get_team_urls(year)
+    team_urls  = get_team_urls(year)
     all_frames = []
 
     for team_url in team_urls:
-        base = team_url.replace(".html", "")
-        team = team_abbrev_from_url(team_url)
+        base        = team_url.replace(".html", "")
+        team        = team_abbrev_from_url(team_url)
         gamelog_url = f"{base}_games.html"
 
         print(f"  Fetching {team} ({year})")
@@ -205,12 +210,8 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
             continue
 
         try:
-            tables = pd.read_html(
-                StringIO(resp.text),
-                attrs={"id": "games"},
-                flavor="lxml",
-            )
-            df = tables[0]
+            tables = pd.read_html(StringIO(resp.text), attrs={"id": "games"}, flavor="lxml")
+            df     = tables[0]
         except ValueError:
             print(f"  ⚠ No table found for {team} ({year})")
             continue
@@ -218,12 +219,9 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
         df = flatten_multiindex(df)
         df = fix_home_away(df)
         df = strip_header_rows(df)
-
-        # derive Rslt from GF/GA so completed games can feed back into training
         df = derive_rslt(df)
-
         df["Season"] = year
-        df["Team"] = team
+        df["Team"]   = team
         all_frames.append(df)
 
     combined = pd.concat(all_frames, ignore_index=True)
@@ -238,17 +236,21 @@ def scrape_current_season(year: int = CURRENT_SEASON) -> pd.DataFrame:
 if __name__ == "__main__":
     print("=== Scraping training seasons (2021–2025) ===")
     training_df = scrape_training_seasons()
-    out_path = os.path.join(DATA_DIR, "nhl_matches_2021_2025.csv")
-    training_df.to_csv(out_path, index=False)
-    print(f"✓ Saved {out_path} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)\n")
+    save_df(
+        training_df,
+        collection="games",
+        csv_path=os.path.join(DATA_DIR, "nhl_matches_2021_2025.csv"),
+    )
 
-    print("=== Scraping current season (2026) ===")
+    print("\n=== Scraping current season (2026) ===")
     current_df = scrape_current_season()
-    out_path = os.path.join(DATA_DIR, "nhl_matches_2026.csv")
-    current_df.to_csv(out_path, index=False)
-    print(f"✓ Saved {out_path} ({len(current_df):,} rows, {current_df['Team'].nunique()} teams)\n")
+    save_df(
+        current_df,
+        collection="schedule",
+        csv_path=os.path.join(DATA_DIR, "nhl_matches_2026.csv"),
+    )
 
-    print("=== Done ===")
+    print("\n=== Done ===")
     print(f"Training columns : {training_df.columns.tolist()}")
     print(f"Current  columns : {current_df.columns.tolist()}")
     rslt_count = current_df["Rslt"].notna().sum() if "Rslt" in current_df.columns else 0
