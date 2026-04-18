@@ -142,6 +142,7 @@ def get_predictor(request: Request):
 _origins = [
     "http://localhost:5173",
     "http://localhost:8000",
+    "https://linelab-frontend.onrender.com"
 ]
 
 if os.getenv("FRONTEND_URL"):
@@ -150,7 +151,7 @@ if os.getenv("FRONTEND_URL"):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
