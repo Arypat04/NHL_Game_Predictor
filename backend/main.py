@@ -168,62 +168,83 @@ def get_predictions(request: Request, date: str):
 
 @app.get("/results")
 def get_results(request: Request, date: str):
-    resp = requests.get(f"{NHL_API_BASE}/score/{date}")
+    try:
+        resp = requests.get(f"{NHL_API_BASE}/score/{date}")
 
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail="NHL API error")
+        if resp.status_code != 200:
+            print("NHL API error:", resp.text)
+            return []
 
-    games = resp.json().get("games", [])
-    if not games:
+        data = resp.json()
+        games = data.get("games", [])
+
+        if not games:
+            return []
+
+        predictor = get_predictor(request)
+        predictions_df = predictor.predict_date(date)
+
+        if predictions_df is None or predictions_df.empty:
+            print("No predictions for date:", date)
+            return []
+
+        pred_lookup = {}
+
+        for _, row in predictions_df.iterrows():
+            try:
+                key = "_".join(sorted([row["Home"], row["Away"]]))
+                pred_lookup[key] = row
+            except Exception as e:
+                print("Bad prediction row skipped:", e)
+
+        results = []
+
+        for game in games:
+            try:
+                state = game.get("gameState", "")
+                if state not in ("OFF", "LIVE", "PRG", "CRIT"):
+                    continue
+
+                away = game["awayTeam"]["abbrev"]
+                home = game["homeTeam"]["abbrev"]
+
+                away = "VGK" if away == "VEG" else away
+                home = "VGK" if home == "VEG" else home
+
+                away_score = game["awayTeam"].get("score", 0)
+                home_score = game["homeTeam"].get("score", 0)
+
+                actual_winner = home if home_score > away_score else away
+
+                key = "_".join(sorted([home, away]))
+                pred = pred_lookup.get(key)
+
+                if not pred:
+                    continue
+
+                results.append({
+                    "Time": pred.get("Time"),
+                    "Status": state,
+                    "Away": away,
+                    "Home": home,
+                    "Away_Score": away_score,
+                    "Home_Score": home_score,
+                    "Actual_Winner": actual_winner,
+                    "Predicted_Winner": pred.get("Predicted_Winner"),
+                    "Home_Win_Prob": pred.get("Home_Win_Prob"),
+                    "Away_Win_Prob": pred.get("Away_Win_Prob"),
+                    "Correct": actual_winner == pred.get("Predicted_Winner"),
+                })
+
+            except Exception as e:
+                print("Game processing error:", e)
+                continue
+
+        return results
+
+    except Exception as e:
+        print("🔥 /results crashed fully:", str(e))
         return []
-
-    predictor = get_predictor(request)
-    predictions_df = predictor.predict_date(date)
-
-    if predictions_df is None:
-        return []
-
-    pred_lookup = {
-        "_".join(sorted([row["Home"], row["Away"]])): row
-        for _, row in predictions_df.iterrows()
-    }
-
-    results = []
-
-    for game in games:
-        state = game.get("gameState", "")
-        if state not in ("OFF", "LIVE", "PRG", "CRIT"):
-            continue
-
-        away = "VGK" if game["awayTeam"]["abbrev"] == "VEG" else game["awayTeam"]["abbrev"]
-        home = "VGK" if game["homeTeam"]["abbrev"] == "VEG" else game["homeTeam"]["abbrev"]
-
-        away_score = game["awayTeam"].get("score", 0)
-        home_score = game["homeTeam"].get("score", 0)
-
-        actual_winner = home if home_score > away_score else away
-
-        key = "_".join(sorted([home, away]))
-        pred = pred_lookup.get(key)
-
-        if not pred:
-            continue
-
-        results.append({
-            "Time": pred["Time"],
-            "Status": state,
-            "Away": away,
-            "Home": home,
-            "Away_Score": away_score,
-            "Home_Score": home_score,
-            "Actual_Winner": actual_winner,
-            "Predicted_Winner": pred["Predicted_Winner"],
-            "Home_Win_Prob": pred["Home_Win_Prob"],
-            "Away_Win_Prob": pred["Away_Win_Prob"],
-            "Correct": actual_winner == pred["Predicted_Winner"],
-        })
-
-    return results
 
 
 # ---------------------------------------------------------------------------
