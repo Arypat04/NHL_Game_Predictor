@@ -120,15 +120,16 @@ def mongo_test():
 
 
 @app.get("/status")
-def status(request: Request):
-    return {
-        "status": "ok",
-        "model_last_trained": None,
-        "total_predictions": request.app.state.total_predictions or 0,
-        "season_accuracy": request.app.state.season_accuracy or 0.571,
-        "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
-    }
+def get_status(request: Request):
+    from database import get_season_stats
 
+    return {
+        "mongo_raw": get_season_stats(),   # 👈 ADD THIS
+        "state": {
+            "total_predictions": request.app.state.total_predictions,
+            "season_accuracy": request.app.state.season_accuracy,
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # PREDICTIONS
