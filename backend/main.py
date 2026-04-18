@@ -150,12 +150,11 @@ if os.getenv("FRONTEND_URL"):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -188,13 +187,17 @@ def get_predictions(request: Request, date: str):
 
 @app.get("/status")
 def get_status(request: Request):
+    try:
+        model_time = os.path.getmtime(MODEL_PATH)
+        model_time_iso = datetime.fromtimestamp(model_time).isoformat()
+    except Exception:
+        model_time_iso = None
+
     return {
         "status": "ok",
-        "model_last_trained": datetime.fromtimestamp(
-            os.path.getmtime(MODEL_PATH)
-        ).isoformat(),
-        "total_predictions": request.app.state.total_predictions or 0,
-        "season_accuracy": request.app.state.season_accuracy or 0.571,
+        "model_last_trained": model_time_iso,
+        "total_predictions": getattr(request.app.state, "total_predictions", 0) or 0,
+        "season_accuracy": getattr(request.app.state, "season_accuracy", 0.571),
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
 
