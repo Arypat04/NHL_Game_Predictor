@@ -6,7 +6,8 @@ __pycache__/
 *.pyd
 .Python
 
-
+# Model files (large, reproducible from CSV)
+backend/models.pkl
 
 # Environment variables (never commit API keys)
 .env

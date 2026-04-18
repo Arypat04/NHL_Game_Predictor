@@ -136,12 +136,6 @@ def _load_schedule_data() -> pd.DataFrame:
 def _encode_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
-
-    # coerce numeric columns that MongoDB may return as strings
-    for col in ["GF", "GA", "days_rest"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
     df["Arena_code"]    = df["Home_Away"].astype("category").cat.codes
     df["Opponent_code"] = df["Opp"].astype("category").cat.codes
     df["Day_code"]      = df["Date"].dt.dayofweek
@@ -169,10 +163,6 @@ def _encode_target(df: pd.DataFrame) -> pd.DataFrame:
 def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     available_cols = [c for c in ROLLING_STAT_COLS if c in df.columns]
     new_col_names: list[str] = []
-
-    # coerce all stat columns to numeric — MongoDB stores some as strings
-    for col in available_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     global_medians = df[available_cols].median()
     df[available_cols] = (
