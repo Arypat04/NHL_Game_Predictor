@@ -121,14 +121,21 @@ def mongo_test():
 
 @app.get("/status")
 def get_status(request: Request):
-    from database import get_season_stats
+    stats = load_season_stats()
+
+    try:
+        model_time = datetime.fromtimestamp(
+            os.path.getmtime(MODEL_PATH)
+        ).isoformat()
+    except Exception:
+        model_time = None
 
     return {
-        "mongo_raw": get_season_stats(),   # 👈 ADD THIS
-        "state": {
-            "total_predictions": request.app.state.total_predictions,
-            "season_accuracy": request.app.state.season_accuracy,
-        }
+        "status": "ok",
+        "model_last_trained": model_time,
+        "total_predictions": stats["total_predictions"],
+        "season_accuracy": stats["season_accuracy"],
+        "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),
     }
 
 # ---------------------------------------------------------------------------
