@@ -34,41 +34,41 @@ MODEL_PATH = os.path.join(BASE_DIR, "models.pkl")
 # ---------------------------------------------------------------------------
 
 TEAM_NAME_TO_ABBREV: dict[str, str] = {
-    "Anaheim Ducks":        "ANA",
-    "Arizona Coyotes":      "ARI",
-    "Boston Bruins":        "BOS",
-    "Buffalo Sabres":       "BUF",
-    "Calgary Flames":       "CGY",
-    "Carolina Hurricanes":  "CAR",
-    "Chicago Blackhawks":   "CHI",
-    "Colorado Avalanche":   "COL",
-    "Columbus Blue Jackets":"CBJ",
-    "Dallas Stars":         "DAL",
-    "Detroit Red Wings":    "DET",
-    "Edmonton Oilers":      "EDM",
-    "Florida Panthers":     "FLA",
-    "Los Angeles Kings":    "LAK",
-    "Minnesota Wild":       "MIN",
-    "Montreal Canadiens":   "MTL",
-    "Montréal Canadiens":   "MTL",
-    "Nashville Predators":  "NSH",
-    "New Jersey Devils":    "NJD",
-    "New York Islanders":   "NYI",
-    "New York Rangers":     "NYR",
-    "Ottawa Senators":      "OTT",
-    "Philadelphia Flyers":  "PHI",
-    "Pittsburgh Penguins":  "PIT",
-    "San Jose Sharks":      "SJS",
-    "Seattle Kraken":       "SEA",
-    "St. Louis Blues":      "STL",
-    "Tampa Bay Lightning":  "TBL",
-    "Toronto Maple Leafs":  "TOR",
-    "Utah Hockey Club":     "UTA",
-    "Utah Mammoth":         "UTA",
-    "Vancouver Canucks":    "VAN",
-    "Vegas Golden Knights": "VGK",
-    "Washington Capitals":  "WSH",
-    "Winnipeg Jets":        "WPG",
+    "Anaheim Ducks":         "ANA",
+    "Arizona Coyotes":       "ARI",
+    "Boston Bruins":         "BOS",
+    "Buffalo Sabres":        "BUF",
+    "Calgary Flames":        "CGY",
+    "Carolina Hurricanes":   "CAR",
+    "Chicago Blackhawks":    "CHI",
+    "Colorado Avalanche":    "COL",
+    "Columbus Blue Jackets": "CBJ",
+    "Dallas Stars":          "DAL",
+    "Detroit Red Wings":     "DET",
+    "Edmonton Oilers":       "EDM",
+    "Florida Panthers":      "FLA",
+    "Los Angeles Kings":     "LAK",
+    "Minnesota Wild":        "MIN",
+    "Montreal Canadiens":    "MTL",
+    "Montréal Canadiens":    "MTL",
+    "Nashville Predators":   "NSH",
+    "New Jersey Devils":     "NJD",
+    "New York Islanders":    "NYI",
+    "New York Rangers":      "NYR",
+    "Ottawa Senators":       "OTT",
+    "Philadelphia Flyers":   "PHI",
+    "Pittsburgh Penguins":   "PIT",
+    "San Jose Sharks":       "SJS",
+    "Seattle Kraken":        "SEA",
+    "St. Louis Blues":       "STL",
+    "Tampa Bay Lightning":   "TBL",
+    "Toronto Maple Leafs":   "TOR",
+    "Utah Hockey Club":      "UTA",
+    "Utah Mammoth":          "UTA",
+    "Vancouver Canucks":     "VAN",
+    "Vegas Golden Knights":  "VGK",
+    "Washington Capitals":   "WSH",
+    "Winnipeg Jets":         "WPG",
 }
 
 ROLLING_STAT_COLS = [
@@ -87,8 +87,8 @@ BASE_PREDICTORS = [
 ]
 
 # CSV fallback paths for local development
-TRAIN_CSV     = os.path.join(BASE_DIR, "../data/nhl_matches_2021_2025.csv")
-SCHEDULE_CSV  = os.path.join(BASE_DIR, "../data/nhl_matches_2026.csv")
+TRAIN_CSV    = os.path.join(BASE_DIR, "../data/nhl_matches_2021_2025.csv")
+SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/nhl_matches_2026.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,6 @@ SCHEDULE_CSV  = os.path.join(BASE_DIR, "../data/nhl_matches_2026.csv")
 # ---------------------------------------------------------------------------
 
 def _load_training_data() -> pd.DataFrame:
-    """Load training data from MongoDB if available, else CSV."""
     if os.getenv("MONGODB_URI"):
         try:
             from database import get_training_data
@@ -112,7 +111,6 @@ def _load_training_data() -> pd.DataFrame:
 
 
 def _load_schedule_data() -> pd.DataFrame:
-    """Load current season schedule from MongoDB if available, else CSV."""
     if os.getenv("MONGODB_URI"):
         try:
             from database import get_schedule_df
@@ -135,6 +133,12 @@ def _load_schedule_data() -> pd.DataFrame:
 
 def _encode_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
+    # coerce numeric columns — MongoDB may return some as strings
+    for col in ["GF", "GA", "days_rest"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     df["Date"] = pd.to_datetime(df["Date"])
     df["Arena_code"]    = df["Home_Away"].astype("category").cat.codes
     df["Opponent_code"] = df["Opp"].astype("category").cat.codes
@@ -163,6 +167,10 @@ def _encode_target(df: pd.DataFrame) -> pd.DataFrame:
 def _rolling_averages(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     available_cols = [c for c in ROLLING_STAT_COLS if c in df.columns]
     new_col_names: list[str] = []
+
+    # coerce all stat columns to numeric — MongoDB may return some as strings
+    for col in available_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     global_medians = df[available_cols].median()
     df[available_cols] = (
@@ -235,19 +243,14 @@ ENSEMBLE_WEIGHTS = {"rf": 0.2, "gb": 0.4, "xgb": 0.4}
 
 class NHLPredictor:
     def __init__(self):
-        self.models: dict            = {}
-        self.predictors: list[str]   = []
-        self._team_code_map: dict    = {}
+        self.models: dict                = {}
+        self.predictors: list[str]       = []
+        self._team_code_map: dict        = {}
         self._rolling_data: pd.DataFrame = pd.DataFrame()
         self._schedule: pd.DataFrame     = pd.DataFrame()
         self._load_and_train()
 
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
-
     def _should_retrain(self) -> bool:
-        """Retrain if models.pkl doesn't exist."""
         return not os.path.exists(MODEL_PATH)
 
     def _load_and_train(self) -> None:
@@ -258,14 +261,13 @@ class NHLPredictor:
             print("Loading saved model...")
             self._load_saved()
             print("✓ Model loaded.\n")
-
         self._load_schedule()
 
     def _train_and_save(self) -> None:
         print("  Loading and preparing data...")
         train_raw = _load_training_data()
 
-        # Append completed 2026 games from schedule
+        # append completed 2026 games from schedule
         try:
             schedule_raw = _load_schedule_data()
             if "Rslt" in schedule_raw.columns:
@@ -305,10 +307,10 @@ class NHLPredictor:
 
         print("  Saving model to disk...")
         joblib.dump({
-            "models":       self.models,
-            "predictors":   self.predictors,
-            "team_code_map":self._team_code_map,
-            "rolling_data": self._rolling_data,
+            "models":        self.models,
+            "predictors":    self.predictors,
+            "team_code_map": self._team_code_map,
+            "rolling_data":  self._rolling_data,
         }, MODEL_PATH)
         print("✓ Model trained and saved.\n")
 
@@ -323,7 +325,6 @@ class NHLPredictor:
         schedule = _load_schedule_data()
         schedule["Date"] = pd.to_datetime(schedule["Date"])
 
-        # map opponent full names to abbreviations
         opp_col = "Opponent" if "Opponent" in schedule.columns else "Opp"
         schedule["Opp_abbrev"] = schedule[opp_col].map(TEAM_NAME_TO_ABBREV)
 
@@ -333,10 +334,6 @@ class NHLPredictor:
             print(f"  ⚠ {missing} schedule rows have unmapped opponent names: {unknown}")
 
         self._schedule = schedule
-
-    # ------------------------------------------------------------------
-    # Prediction helpers
-    # ------------------------------------------------------------------
 
     def _latest_stats(self, team: str, before_date: pd.Timestamp) -> pd.Series | None:
         rows = self._rolling_data[
@@ -363,22 +360,18 @@ class NHLPredictor:
         rolling_cols: list[str],
     ) -> pd.DataFrame:
         row: dict = {
-            "Team_code":      [team_stats["Team_code"]],
-            "Opponent_code":  [self._team_code(opponent_abbrev)],
-            "Arena_code":     [1 if home_away == "Home" else 0],
-            "Day_code":       [game_date.dayofweek],
-            "OT_code":        [0],
-            "days_rest":      [team_stats["days_rest"]],
-            "back_to_back":   [team_stats["back_to_back"]],
-            "well_rested":    [team_stats["well_rested"]],
+            "Team_code":     [team_stats["Team_code"]],
+            "Opponent_code": [self._team_code(opponent_abbrev)],
+            "Arena_code":    [1 if home_away == "Home" else 0],
+            "Day_code":      [game_date.dayofweek],
+            "OT_code":       [0],
+            "days_rest":     [team_stats["days_rest"]],
+            "back_to_back":  [team_stats["back_to_back"]],
+            "well_rested":   [team_stats["well_rested"]],
         }
         for col in rolling_cols:
             row[col] = [team_stats.get(col, np.nan)]
         return pd.DataFrame(row)[self.predictors]
-
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
 
     def predict_date(self, date_str: str) -> pd.DataFrame | None:
         if date_str.lower() == "today":
@@ -399,8 +392,8 @@ class NHLPredictor:
         predictions  = []
 
         for _, game in games_today.iterrows():
-            team        = game["Team"]
-            opp_abbrev  = game.get("Opp_abbrev") or TEAM_NAME_TO_ABBREV.get(
+            team       = game["Team"]
+            opp_abbrev = game.get("Opp_abbrev") or TEAM_NAME_TO_ABBREV.get(
                 game.get("Opponent", game.get("Opp", ""))
             )
 

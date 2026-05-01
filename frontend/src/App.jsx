@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import DateTabs from "./components/DateTabs"
 import PredictionsTable from "./components/PredictionsTable"
 import ResultsTable from "./components/ResultsTable"
@@ -16,7 +16,14 @@ function App() {
     return toAPIDate(d)
   }, [])
 
-  const [selectedDate, setSelectedDate] = useState(todayStr)
+  // read date from URL on load, fall back to today
+  const getInitialDate = () => {
+    const params = new URLSearchParams(window.location.search)
+    const dateParam = params.get("date")
+    return dateParam || todayStr
+  }
+
+  const [selectedDate, setSelectedDate] = useState(getInitialDate)
   const [theme, setTheme] = useState("dark")
   const [betType, setBetType] = useState("moneyline")
 
@@ -36,10 +43,19 @@ function App() {
   const [statusLoading, setStatusLoading] = useState(false)
   const [statusError, setStatusError] = useState(null)
 
-  const isYesterday = selectedDate === yesterdayStr
-  const isToday     = selectedDate === todayStr
-  const isFuture    = selectedDate > todayStr
   const [minConfidence, setMinConfidence] = useState(50)
+
+  const isToday  = selectedDate === todayStr
+  const isPast   = selectedDate < todayStr   // any date before today
+  const isFuture = selectedDate > todayStr
+
+  // update selected date and push to URL
+  const handleDateSelect = useCallback((date) => {
+    setSelectedDate(date)
+    const url = new URL(window.location)
+    url.searchParams.set("date", date)
+    window.history.pushState({}, "", url)
+  }, [])
 
   // apply theme to document
   useEffect(() => {
@@ -88,7 +104,6 @@ function App() {
 
     fetchData()
 
-    // cleanup — if selectedDate changes before fetch completes, ignore stale results
     return () => { cancelled = true }
   }, [selectedDate])
 
@@ -108,34 +123,33 @@ function App() {
     fetchStatus()
   }, [])
 
+  // polling — re-fetch results and edges every 5 minutes when today is selected
   useEffect(() => {
-  if (!isToday) return
+    if (!isToday) return
 
-  const interval = setInterval(async () => {
-    try {
-      const [resultsData, edgesData] = await Promise.all([
-        getResults(todayStr),
-        getEdges(todayStr),
-      ])
-      setResults(resultsData)
-      setEdges(edgesData)
-    } catch (err) {
-      // silent fail — don't disrupt the UI for a background poll
-    }
-  }, 5 * 60 * 1000)
+    const interval = setInterval(async () => {
+      try {
+        const [resultsData, edgesData] = await Promise.all([
+          getResults(todayStr),
+          getEdges(todayStr),
+        ])
+        setResults(resultsData)
+        setEdges(edgesData)
+      } catch (err) {
+        // silent fail
+      }
+    }, 5 * 60 * 1000)
 
-  return () => clearInterval(interval)
+    return () => clearInterval(interval)
   }, [isToday, todayStr])
 
+  const filteredPredictions = predictions.filter(
+    g => g.Confidence * 100 >= minConfidence
+  )
 
-const filteredPredictions = predictions.filter(
-  g => g.Confidence * 100 >= minConfidence
-)
-
-const filteredEdges = edges.filter(
-  g => Math.max(g.Home_Win_Prob, g.Away_Win_Prob) * 100 >= minConfidence
-)
-
+  const filteredEdges = edges.filter(
+    g => Math.max(g.Home_Win_Prob, g.Away_Win_Prob) * 100 >= minConfidence
+  )
 
   return (
     <div className="app">
@@ -147,7 +161,7 @@ const filteredEdges = edges.filter(
       </header>
       <div className="content">
         <StatsBar status={status} loading={statusLoading} error={statusError} />
-        <DateTabs selectedDate={selectedDate} onDateSelect={setSelectedDate} />
+        <DateTabs selectedDate={selectedDate} onDateSelect={handleDateSelect} />
         <BetTypeTabs selectedBetType={betType} onBetTypeSelect={setBetType} />
         <div className="filter-bar">
           <label className="filter-label">
@@ -162,7 +176,8 @@ const filteredEdges = edges.filter(
             onChange={(e) => setMinConfidence(Number(e.target.value))}
           />
         </div>
-        
+
+        {/* predictions + edges for today and future */}
         {(isToday || isFuture) && (
           <>
             <p className="section-label">Predictions</p>
@@ -172,7 +187,8 @@ const filteredEdges = edges.filter(
           </>
         )}
 
-        {(isYesterday || (isToday && results.length > 0)) && (
+        {/* results for any past date or today if games have finished */}
+        {(isPast || (isToday && results.length > 0)) && (
           <>
             <p className="section-label">Results</p>
             <ResultsTable results={results} loading={resultsLoading} error={resultsError} />

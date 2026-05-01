@@ -24,7 +24,7 @@ MARKETS = {
         "odds_market": "player_points",
         "active":      False,
     },
-}
+} 
 
 STATE_MAP = {
     "OFF":  "Final",
