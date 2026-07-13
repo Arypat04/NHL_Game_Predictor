@@ -7,26 +7,26 @@ export function toAPIDate(date) {
   return `${y}-${m}-${d}`
 }
 
-export async function getPredictions(date) {
-  const resp = await fetch(`${BASE_URL}/predictions?date=${date}`)
+export async function getPredictions(date, sport = "nhl") {
+  const resp = await fetch(`${BASE_URL}/predictions?date=${date}&sport=${sport}`)
   if (!resp.ok) throw new Error(`Error fetching predictions: ${resp.statusText}`)
   return resp.json()
 }
 
-export async function getResults(date) {
-  const resp = await fetch(`${BASE_URL}/results?date=${date}`)
+export async function getResults(date, sport = "nhl") {
+  const resp = await fetch(`${BASE_URL}/results?date=${date}&sport=${sport}`)
   if (!resp.ok) throw new Error(`Error fetching results: ${resp.statusText}`)
   return resp.json()
 }
 
-export async function getEdges(date) {
-  const resp = await fetch(`${BASE_URL}/edges?date=${date}`)
+export async function getEdges(date, sport = "nhl") {
+  const resp = await fetch(`${BASE_URL}/edges?date=${date}&sport=${sport}`)
   if (!resp.ok) throw new Error(`Error fetching edges: ${resp.statusText}`)
   return resp.json()
 }
 
-export async function getStatus() {
-  const resp = await fetch(`${BASE_URL}/status`)
+export async function getStatus(sport = "nhl") {
+  const resp = await fetch(`${BASE_URL}/status?sport=${sport}`)
   if (!resp.ok) throw new Error(`Error fetching status: ${resp.statusText}`)
   return resp.json()
 }

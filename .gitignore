@@ -6,8 +6,12 @@ __pycache__/
 *.pyd
 .Python
 
-# Model files (large, reproducible from CSV)
-backend/models.pkl
+# Model files (large, auto-retrained on startup if missing)
+backend/*.pkl
+
+# Model-search artifacts (local records, not needed to run)
+backend/*_best_model.json
+backend/*_search_log.csv
 
 # Environment variables (never commit API keys)
 .env

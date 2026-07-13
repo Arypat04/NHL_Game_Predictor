@@ -5,6 +5,7 @@ import ResultsTable from "./components/ResultsTable"
 import StatsBar from "./components/StatsBar"
 import EdgesTable from "./components/EdgesTable"
 import BetTypeTabs from "./components/BetTypeTabs"
+import SportTabs from "./components/SportTabs"
 import { getPredictions, getResults, getStatus, toAPIDate, getEdges } from "./services/api"
 import './App.css'
 
@@ -16,14 +17,20 @@ function App() {
     return toAPIDate(d)
   }, [])
 
-  // read date from URL on load, fall back to today
+  // Read date and sport from URL on load
   const getInitialDate = () => {
     const params = new URLSearchParams(window.location.search)
-    const dateParam = params.get("date")
-    return dateParam || todayStr
+    return params.get("date") || todayStr
+  }
+
+  const getInitialSport = () => {
+    const params = new URLSearchParams(window.location.search)
+    const s = params.get("sport")
+    return s === "mlb" ? "mlb" : "nhl"  // default to nhl
   }
 
   const [selectedDate, setSelectedDate] = useState(getInitialDate)
+  const [sport, setSport] = useState(getInitialSport)
   const [theme, setTheme] = useState("dark")
   const [betType, setBetType] = useState("moneyline")
 
@@ -46,10 +53,10 @@ function App() {
   const [minConfidence, setMinConfidence] = useState(50)
 
   const isToday  = selectedDate === todayStr
-  const isPast   = selectedDate < todayStr   // any date before today
+  const isPast   = selectedDate < todayStr
   const isFuture = selectedDate > todayStr
 
-  // update selected date and push to URL
+  // Update selected date and push to URL
   const handleDateSelect = useCallback((date) => {
     setSelectedDate(date)
     const url = new URL(window.location)
@@ -57,12 +64,24 @@ function App() {
     window.history.pushState({}, "", url)
   }, [])
 
-  // apply theme to document
+  // Update sport, push to URL, reset all data
+  const handleSportSelect = useCallback((newSport) => {
+    setSport(newSport)
+    setPredictions([])
+    setResults([])
+    setEdges([])
+    setStatus(null)
+    const url = new URL(window.location)
+    url.searchParams.set("sport", newSport)
+    window.history.pushState({}, "", url)
+  }, [])
+
+  // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme)
   }, [theme])
 
-  // fetch predictions, results, edges when date changes
+  // Fetch predictions, results, edges when date or sport changes
   useEffect(() => {
     let cancelled = false
 
@@ -73,9 +92,12 @@ function App() {
       setError(null)
       setResultsError(null)
       setEdgesError(null)
+      setPredictions([])
+      setResults([])
+      setEdges([])
 
       try {
-        const data = await getPredictions(selectedDate)
+        const data = await getPredictions(selectedDate, sport)
         if (!cancelled) setPredictions(data)
       } catch (err) {
         if (!cancelled) setError(err.message)
@@ -84,7 +106,7 @@ function App() {
       }
 
       try {
-        const data = await getResults(selectedDate)
+        const data = await getResults(selectedDate, sport)
         if (!cancelled) setResults(data)
       } catch (err) {
         if (!cancelled) setResultsError(err.message)
@@ -93,7 +115,7 @@ function App() {
       }
 
       try {
-        const data = await getEdges(selectedDate)
+        const data = await getEdges(selectedDate, sport)
         if (!cancelled) setEdges(data)
       } catch (err) {
         if (!cancelled) setEdgesError(err.message)
@@ -103,16 +125,16 @@ function App() {
     }
 
     fetchData()
-
     return () => { cancelled = true }
-  }, [selectedDate])
+  }, [selectedDate, sport])
 
-  // fetch status once on mount
+  // Fetch status when sport changes
   useEffect(() => {
     async function fetchStatus() {
       setStatusLoading(true)
+      setStatusError(null)
       try {
-        const data = await getStatus()
+        const data = await getStatus(sport)
         setStatus(data)
       } catch (err) {
         setStatusError(err.message)
@@ -121,27 +143,27 @@ function App() {
       }
     }
     fetchStatus()
-  }, [])
+  }, [sport])
 
-  // polling — re-fetch results and edges every 5 minutes when today is selected
+  // Polling — re-fetch results and edges every 5 minutes when today is selected
   useEffect(() => {
     if (!isToday) return
 
     const interval = setInterval(async () => {
       try {
         const [resultsData, edgesData] = await Promise.all([
-          getResults(todayStr),
-          getEdges(todayStr),
+          getResults(todayStr, sport),
+          getEdges(todayStr, sport),
         ])
         setResults(resultsData)
         setEdges(edgesData)
-      } catch (err) {
+      } catch {
         // silent fail
       }
     }, 5 * 60 * 1000)
 
     return () => clearInterval(interval)
-  }, [isToday, todayStr])
+  }, [isToday, todayStr, sport])
 
   const filteredPredictions = predictions.filter(
     g => g.Confidence * 100 >= minConfidence
@@ -155,14 +177,20 @@ function App() {
     <div className="app">
       <header className="header">
         <div className="header-logo">Line <span>Lab</span></div>
-        <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
           {theme === "dark" ? "☀ Light" : "☾ Dark"}
         </button>
       </header>
+
       <div className="content">
         <StatsBar status={status} loading={statusLoading} error={statusError} />
+        <SportTabs selectedSport={sport} onSportSelect={handleSportSelect} />
         <DateTabs selectedDate={selectedDate} onDateSelect={handleDateSelect} />
         <BetTypeTabs selectedBetType={betType} onBetTypeSelect={setBetType} />
+
         <div className="filter-bar">
           <label className="filter-label">
             Min Confidence: <span>{minConfidence}%</span>
@@ -177,21 +205,33 @@ function App() {
           />
         </div>
 
-        {/* predictions + edges for today and future */}
+        {/* Predictions + edges for today and future */}
         {(isToday || isFuture) && (
           <>
             <p className="section-label">Predictions</p>
-            <PredictionsTable predictions={filteredPredictions} loading={loading} error={error} />
+            <PredictionsTable
+              predictions={filteredPredictions}
+              loading={loading}
+              error={error}
+            />
             <p className="section-label">Edges</p>
-            <EdgesTable edges={filteredEdges} loading={edgesLoading} error={edgesError} />
+            <EdgesTable
+              edges={filteredEdges}
+              loading={edgesLoading}
+              error={edgesError}
+            />
           </>
         )}
 
-        {/* results for any past date or today if games have finished */}
+        {/* Results for past dates or today if games have finished */}
         {(isPast || (isToday && results.length > 0)) && (
           <>
             <p className="section-label">Results</p>
-            <ResultsTable results={results} loading={resultsLoading} error={resultsError} />
+            <ResultsTable
+              results={results}
+              loading={resultsLoading}
+              error={resultsError}
+            />
           </>
         )}
       </div>
