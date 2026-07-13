@@ -1,4 +1,5 @@
 import os
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib import import_module
@@ -59,11 +60,13 @@ def american_to_implied(odds: int) -> float:
 
 def get_predictor(request: Request, sport: str):
     sport = sport.lower()
-    if sport == "nhl":
-        return request.app.state.nhl_predictor
-    if sport == "mlb":
-        return request.app.state.mlb_predictor
-    raise HTTPException(status_code=400, detail=f"Unknown sport '{sport}'. Use 'nhl' or 'mlb'.")
+    if sport not in ("nhl", "mlb"):
+        raise HTTPException(status_code=400, detail=f"Unknown sport '{sport}'. Use 'nhl' or 'mlb'.")
+    predictor = (request.app.state.nhl_predictor if sport == "nhl"
+                 else request.app.state.mlb_predictor)
+    if predictor is None:
+        raise HTTPException(status_code=503, detail="Model is still warming up — try again shortly.")
+    return predictor
 
 
 def get_mlb_postponed_games(date: str) -> set:
@@ -144,25 +147,36 @@ def calculate_season_accuracy(sport: str) -> dict:
 # Lifespan
 # ---------------------------------------------------------------------------
 
+def _warmup(app: FastAPI) -> None:
+    """Load predictors + season stats. Runs in a background thread so the web
+    server can bind its port immediately — loading the models (and, on a cold
+    cache, collecting MLB starting-pitcher data) can take minutes, which would
+    otherwise blow past Render's startup port-scan timeout."""
+    try:
+        print("Loading NHL predictor...")
+        app.state.nhl_predictor = NHLPredictor()
+        print("Loading MLB predictor...")
+        app.state.mlb_predictor = MLBPredictor()
+
+        nhl_stats = calculate_season_accuracy("nhl")
+        mlb_stats = calculate_season_accuracy("mlb")
+        app.state.nhl_accuracy = nhl_stats["accuracy"]; app.state.nhl_total = nhl_stats["total"]
+        app.state.mlb_accuracy = mlb_stats["accuracy"]; app.state.mlb_total = mlb_stats["total"]
+        print(f"✓ NHL: {nhl_stats['accuracy']:.1%} over {nhl_stats['total']} games")
+        print(f"✓ MLB: {mlb_stats['accuracy']:.1%} over {mlb_stats['total']} games\n")
+    except Exception as e:
+        print(f"⚠ Warmup failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Loading NHL predictor...")
-    app.state.nhl_predictor = NHLPredictor()
+    # sensible defaults so routes respond (503 for predictions) before warmup finishes
+    app.state.nhl_predictor = None
+    app.state.mlb_predictor = None
+    app.state.nhl_accuracy = 0.0; app.state.nhl_total = 0
+    app.state.mlb_accuracy = 0.0; app.state.mlb_total = 0
 
-    print("Loading MLB predictor...")
-    app.state.mlb_predictor = MLBPredictor()
-
-    print("Calculating season accuracy...")
-    nhl_stats = calculate_season_accuracy("nhl")
-    mlb_stats = calculate_season_accuracy("mlb")
-
-    app.state.nhl_accuracy = nhl_stats["accuracy"]
-    app.state.nhl_total    = nhl_stats["total"]
-    app.state.mlb_accuracy = mlb_stats["accuracy"]
-    app.state.mlb_total    = mlb_stats["total"]
-
-    print(f"✓ NHL: {nhl_stats['accuracy']:.1%} over {nhl_stats['total']} games")
-    print(f"✓ MLB: {mlb_stats['accuracy']:.1%} over {mlb_stats['total']} games\n")
+    threading.Thread(target=_warmup, args=(app,), daemon=True).start()
     yield
 
 
