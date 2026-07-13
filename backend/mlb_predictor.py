@@ -25,15 +25,15 @@ from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 import mlb_matchup as M
 from mlb_pitchers import sp_feature_cols
 from mlb_teams import TEAM_ID_TO_ABBREV
+from seasons import TRAIN_WINDOW
 
 warnings.filterwarnings("ignore")
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH   = os.path.join(BASE_DIR, "models_mlb.pkl")
-TRAIN_CSV    = os.path.join(BASE_DIR, "../data/mlb_matches_2021_2025.csv")
-SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/mlb_matches_2026.csv")
+TRAIN_CSV    = os.path.join(BASE_DIR, "../data/mlb_matches_train.csv")
+SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/mlb_matches_current.csv")
 MLB_API      = "https://statsapi.mlb.com/api/v1"
-CURRENT_SEASON = 2026
 
 # Exhaustive search (model_search.py): bagged trees beat boosting here too — the
 # old xgb-heavy ensemble was suboptimal. Blend the two winning families.
@@ -52,17 +52,24 @@ def _build_models() -> dict:
 
 
 def _load_team_data() -> pd.DataFrame:
+    """Team-game logs trimmed to the rolling training window."""
+    df = None
     if os.getenv("MONGODB_URI"):
         try:
             from mlb_database import get_training_data
-            df = get_training_data()
-            if not df.empty:
-                print(f"  Loaded {len(df):,} team-game rows from MongoDB")
-                return df
+            loaded = get_training_data()
+            if not loaded.empty:
+                print(f"  Loaded {len(loaded):,} team-game rows from MongoDB")
+                df = loaded
         except Exception as e:
             print(f"  ⚠ MongoDB load failed: {e} — falling back to CSV")
-    print("  Loading team-game data from CSV...")
-    df = pd.read_csv(TRAIN_CSV); df["Date"] = pd.to_datetime(df["Date"]); return df
+    if df is None:
+        print("  Loading team-game data from CSV...")
+        df = pd.read_csv(TRAIN_CSV); df["Date"] = pd.to_datetime(df["Date"])
+    # data-driven rolling window — newest TRAIN_WINDOW+1 seasons present
+    labels = df["Season"].apply(M.normalize_season)
+    cur = int(labels.max())
+    return df[labels.between(cur - TRAIN_WINDOW, cur)].copy()
 
 
 def _load_schedule_data() -> pd.DataFrame:
@@ -90,6 +97,7 @@ class MLBPredictor:
         self._rolled: pd.DataFrame    = pd.DataFrame()
         self._sp_form: pd.DataFrame   = pd.DataFrame()
         self._schedule: pd.DataFrame  = pd.DataFrame()
+        self._window: list[int]       = []
         self._load_and_train()
 
     def _should_retrain(self) -> bool:
@@ -98,7 +106,7 @@ class MLBPredictor:
     def _load_and_train(self) -> None:
         team_full = _load_team_data()
         team_full["Season"] = team_full["Season"].apply(M.normalize_season)
-        seasons = sorted(team_full["Season"].unique())
+        self._window = sorted(team_full["Season"].unique().tolist())
 
         # team offense rolling frame for live lookups (+ current-season games)
         team_all = team_full
@@ -112,11 +120,11 @@ class MLBPredictor:
         self._rolled, self._team_feats = M.team_rolling(team_all)
         self._feature_cols = M.feature_cols(self._team_feats)
 
-        # pitcher form frame for live lookups (training seasons + current)
+        # pitcher form frame for live lookups (every season present + current)
         forms = []
-        for y in seasons + [CURRENT_SEASON]:
+        for y in sorted(team_all["Season"].apply(M.normalize_season).unique()):
             try:
-                f = M.pitcher_form_cached(y)
+                f = M.pitcher_form_cached(int(y))
                 if not f.empty:
                     forms.append(f)
             except Exception:
@@ -131,6 +139,9 @@ class MLBPredictor:
             saved = joblib.load(MODEL_PATH)
             if saved.get("feature_cols") != self._feature_cols:
                 print("  ⚠ Saved feature set is stale — retraining...")
+                self._train_and_save(team_full)
+            elif saved.get("seasons") != self._window:
+                print("  ⚠ Season window has rolled over — retraining...")
                 self._train_and_save(team_full)
             else:
                 self.models  = saved["models"]
@@ -150,7 +161,8 @@ class MLBPredictor:
             cal.fit(X, y)
             self.models[name] = cal
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,
-                     "team_feats": self._team_feats, "medians": self._medians}, MODEL_PATH)
+                     "team_feats": self._team_feats, "medians": self._medians,
+                     "seasons": self._window}, MODEL_PATH)
         print("✓ Model trained and saved.\n")
 
     def _load_schedule(self) -> None:

@@ -24,7 +24,7 @@ from mlb_pitchers import (
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "../data")
 CACHE_DIR = os.path.join(DATA_DIR, "mlb_cache")
-TRAIN_CSV = os.path.join(DATA_DIR, "mlb_matches_2021_2025.csv")
+TRAIN_CSV = os.path.join(DATA_DIR, "mlb_matches_train.csv")
 
 # Feature set + windows from exhaustive search (model_search.py, 4-season CV):
 # team OFFENSE only — the team-level pitching stats (P_ERA/P_WHIP/...) are

@@ -53,7 +53,7 @@ def load_full(sport: str):
         raw = pd.read_csv(M.TRAIN_CSV)
         raw["Date"] = pd.to_datetime(raw["Date"])
         try:  # include rich current-season completed games as an extra CV fold
-            cur = pd.read_csv(os.path.join(DATA_DIR, "nhl_matches_2026.csv"))
+            cur = pd.read_csv(os.path.join(DATA_DIR, "nhl_matches_current.csv"))
             cur["Date"] = pd.to_datetime(cur["Date"])
             cur = cur.dropna(subset=["Rslt"])
             if not cur.empty and "CF%" in cur.columns:

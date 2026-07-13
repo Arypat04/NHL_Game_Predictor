@@ -7,7 +7,7 @@ precision / accuracy / AUC-ROC / Brier, plus feature importance and the starting
 pitcher's share of it. Config is imported from the live modules so this always
 evaluates production.
 
-Only knob here is TEST_SEASON.
+Holds out the most recent season present in the data (no manual knobs).
 """
 
 import warnings
@@ -26,8 +26,6 @@ from mlb_predictor import ENSEMBLE_WEIGHTS, TRAIN_CSV, _build_models
 
 warnings.filterwarnings("ignore")
 
-TEST_SEASON = 2025
-
 
 def load_data() -> tuple[pd.DataFrame, list[str]]:
     raw = pd.read_csv(TRAIN_CSV)
@@ -35,16 +33,17 @@ def load_data() -> tuple[pd.DataFrame, list[str]]:
 
 
 def evaluate(game: pd.DataFrame, cols: list[str]) -> None:
-    train = game[game["Season"] < TEST_SEASON]
-    test  = game[game["Season"] == TEST_SEASON]
+    test_season = int(game["Season"].max())   # hold out the most recent season present
+    train = game[game["Season"] < test_season]
+    test  = game[game["Season"] == test_season]
     if train.empty or test.empty:
-        print(f"⚠ No data for split at season {TEST_SEASON} "
+        print(f"⚠ No data for split at season {test_season} "
               f"(seasons present: {sorted(game['Season'].unique())})")
         return
 
     Xtr, ytr = train[cols].fillna(train[cols].median()), train["home_win"]
     Xte, yte = test[cols].fillna(train[cols].median()), test["home_win"]
-    print(f"Train {len(train):,} games | Test (season {TEST_SEASON}) {len(test):,} games\n")
+    print(f"Train {len(train):,} games | Test (season {test_season}) {len(test):,} games\n")
 
     print(f"{'Model':<22} {'Precision':>10} {'Accuracy':>10} {'AUC-ROC':>10} {'Brier':>8}")
     print("-" * 64)

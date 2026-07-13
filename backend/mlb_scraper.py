@@ -6,8 +6,8 @@ Data sources:
   - /teams/{id}/stats → per-game hitting + pitching logs
 
 Produces:
-  - mlb_matches_2021_2025.csv  (training data)
-  - mlb_matches_2026.csv       (current season)
+  - mlb_matches_train.csv    (training window)
+  - mlb_matches_current.csv  (current season)
 
 Postponed games (codedGameState=D) are filtered out.
 Same-day rainouts played later keep their Final entry.
@@ -23,9 +23,12 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from mlb_teams import TEAM_ID_TO_ABBREV, VALID_TEAM_IDS
+from seasons import current_season, training_seasons
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "../data")
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR    = os.path.join(BASE_DIR, "../data")
+TRAIN_CSV   = os.path.join(DATA_DIR, "mlb_matches_train.csv")
+CURRENT_CSV = os.path.join(DATA_DIR, "mlb_matches_current.csv")
 
 load_dotenv(os.path.join(BASE_DIR, "../.env"))
 
@@ -39,8 +42,9 @@ HEADERS = {
     )
 }
 
-TRAINING_SEASONS = list(range(2021, 2026))
-CURRENT_SEASON   = 2026
+# Rolling year windows — auto-advance with the calendar (see seasons.py)
+TRAINING_SEASONS = training_seasons("mlb")
+CURRENT_SEASON   = current_season("mlb")
 
 
 def api_get(endpoint: str, params: dict = None) -> dict | None:
@@ -344,13 +348,12 @@ def generate_results(current_df: pd.DataFrame) -> None:
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("=== Scraping training seasons (2021–2025) ===")
+    print(f"=== Scraping training seasons {TRAINING_SEASONS[0]}–{TRAINING_SEASONS[-1]} ===")
     training_df = scrape_training_seasons()
 
     if not training_df.empty:
-        path = os.path.join(DATA_DIR, "mlb_matches_2021_2025.csv")
-        training_df.to_csv(path, index=False)
-        print(f"\n✓ Saved {path} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)")
+        training_df.to_csv(TRAIN_CSV, index=False)
+        print(f"\n✓ Saved {TRAIN_CSV} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)")
         if os.getenv("MONGODB_URI"):
             try:
                 from mlb_database import upsert_games
@@ -359,13 +362,12 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"  ⚠ MongoDB write failed: {e}")
 
-    print("\n=== Scraping current season (2026) ===")
+    print(f"\n=== Scraping current season ({CURRENT_SEASON}) ===")
     current_df = scrape_current_season()
 
     if not current_df.empty:
-        path = os.path.join(DATA_DIR, "mlb_matches_2026.csv")
-        current_df.to_csv(path, index=False)
-        print(f"✓ Saved {path} ({len(current_df):,} rows, {current_df['Team'].nunique()} teams)")
+        current_df.to_csv(CURRENT_CSV, index=False)
+        print(f"✓ Saved {CURRENT_CSV} ({len(current_df):,} rows, {current_df['Team'].nunique()} teams)")
         if os.getenv("MONGODB_URI"):
             try:
                 from mlb_database import upsert_schedule

@@ -23,13 +23,14 @@ from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 
 import nhl_matchup as M
 from nhl_teams import TEAM_NAME_TO_ABBREV  # re-exported for scraper/main imports
+from seasons import TRAIN_WINDOW
 
 warnings.filterwarnings("ignore")
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH   = os.path.join(BASE_DIR, "nhl_model.pkl")
-TRAIN_CSV    = os.path.join(BASE_DIR, "../data/nhl_matches_2021_2025.csv")
-SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/nhl_matches_2026.csv")
+TRAIN_CSV    = os.path.join(BASE_DIR, "../data/nhl_matches_train.csv")
+SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/nhl_matches_current.csv")
 
 # The exhaustive search (model_search.py) found bagged trees (RandomForest,
 # ExtraTrees) clearly beat boosting (XGBoost/GB) on this noisy data — the old
@@ -54,29 +55,38 @@ def _build_models() -> dict:
 
 def _load_team_data() -> pd.DataFrame:
     """All team-game logs (training seasons + rich current-season completed
-    games) — the source for both training and the rolling lookups."""
+    games), trimmed to the rolling training window — the source for both
+    training and the live rolling lookups."""
+    df = None
     if os.getenv("MONGODB_URI"):
         try:
             from nhl_database import get_training_data
-            df = get_training_data()   # games collection incl. rich current-season games
-            if not df.empty:
-                print(f"  Loaded {len(df):,} team-game rows from MongoDB")
-                return df
+            loaded = get_training_data()   # games collection incl. current season
+            if not loaded.empty:
+                print(f"  Loaded {len(loaded):,} team-game rows from MongoDB")
+                df = loaded
         except Exception as e:
             print(f"  ⚠ MongoDB load failed: {e} — falling back to CSV")
-    print("  Loading team-game data from CSV...")
-    df = pd.read_csv(TRAIN_CSV)
-    df["Date"] = pd.to_datetime(df["Date"])
-    # include rich current-season completed games for up-to-date rolling
-    try:
-        cur = pd.read_csv(SCHEDULE_CSV)
-        cur["Date"] = pd.to_datetime(cur["Date"])
-        cur = cur.dropna(subset=["Rslt"])
-        if not cur.empty and "CF%" in cur.columns:   # only if the file is rich
-            df = pd.concat([df, cur], ignore_index=True)
-    except Exception:
-        pass
-    return df
+    if df is None:
+        print("  Loading team-game data from CSV...")
+        df = pd.read_csv(TRAIN_CSV)
+        df["Date"] = pd.to_datetime(df["Date"])
+        # include rich current-season completed games for up-to-date rolling
+        try:
+            cur = pd.read_csv(SCHEDULE_CSV)
+            cur["Date"] = pd.to_datetime(cur["Date"])
+            cur = cur.dropna(subset=["Rslt"])
+            if not cur.empty and "CF%" in cur.columns:   # only if the file is rich
+                df = pd.concat([df, cur], ignore_index=True)
+        except Exception:
+            pass
+
+    # keep only the newest TRAIN_WINDOW+1 seasons present — data-driven, so the
+    # window always matches whatever the scraper collected and the oldest season
+    # drops out automatically (even when MongoDB has accumulated older seasons)
+    labels = df["Season"].apply(M.normalize_season)
+    cur = int(labels.max())
+    return df[labels.between(cur - TRAIN_WINDOW, cur)].copy()
 
 
 def _load_schedule_data() -> pd.DataFrame:
@@ -104,6 +114,7 @@ class NHLPredictor:
         self._team_feats: list[str]   = []
         self._rolled: pd.DataFrame    = pd.DataFrame()
         self._schedule: pd.DataFrame  = pd.DataFrame()
+        self._window: list[int]       = []
         self._load_and_train()
 
     def _should_retrain(self) -> bool:
@@ -112,6 +123,7 @@ class NHLPredictor:
     def _load_and_train(self) -> None:
         # all team-game logs incl. rich current-season completed games
         team = _load_team_data()
+        self._window = sorted(team["Season"].apply(M.normalize_season).unique().tolist())
 
         # rolling frame used for live prediction lookups
         self._rolled, self._team_feats = M.team_rolling(team)
@@ -125,6 +137,9 @@ class NHLPredictor:
             saved = joblib.load(MODEL_PATH)
             if saved.get("feature_cols") != self._feature_cols:
                 print("  ⚠ Saved feature set is stale — retraining...")
+                self._train_and_save(team)
+            elif saved.get("seasons") != self._window:
+                print("  ⚠ Season window has rolled over — retraining...")
                 self._train_and_save(team)
             else:
                 self.models = saved["models"]
@@ -142,7 +157,7 @@ class NHLPredictor:
             cal.fit(X, y)
             self.models[name] = cal
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,
-                     "team_feats": self._team_feats}, MODEL_PATH)
+                     "team_feats": self._team_feats, "seasons": self._window}, MODEL_PATH)
         print("✓ Model trained and saved.\n")
 
     def _load_schedule(self) -> None:

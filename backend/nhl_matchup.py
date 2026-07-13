@@ -20,7 +20,7 @@ import pandas as pd
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "../data")
-TRAIN_CSV = os.path.join(DATA_DIR, "nhl_matches_2021_2025.csv")
+TRAIN_CSV = os.path.join(DATA_DIR, "nhl_matches_train.csv")
 
 # Feature set + windows: an exhaustive search (2040 combos, 5-season walk-forward
 # CV; see model_search.py) showed windows and feature sets barely move accuracy

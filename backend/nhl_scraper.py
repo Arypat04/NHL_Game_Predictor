@@ -4,8 +4,8 @@ NHL Scraper (official NHL API)
 Collects NHL data from the official NHL API — no website scraping. (Replaced the
 old Hockey-Reference scraper.) Produces two CSVs / MongoDB collections:
 
-  - nhl_matches_2021_2025.csv  (training data, full per-game stats)
-  - nhl_matches_2026.csv       (current season schedule + results)
+  - nhl_matches_train.csv    (training window, full per-game stats)
+  - nhl_matches_current.csv  (current season schedule + results)
 
 Data sources (all free, no scraping):
   - api-web.nhle.com/v1/standings/{date}                  → teams in a season
@@ -29,7 +29,7 @@ the current season's new games.
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -37,18 +37,22 @@ import requests
 from dotenv import load_dotenv
 
 from nhl_teams import ABBREV_TO_NAME, RELOCATION_MAP
+from seasons import current_season, training_seasons
 
-BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR  = os.path.join(BASE_DIR, "../data")
-CACHE_DIR = os.path.join(DATA_DIR, "nhl_cache")   # per-season checkpoints for resume
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR    = os.path.join(BASE_DIR, "../data")
+CACHE_DIR   = os.path.join(DATA_DIR, "nhl_cache")   # per-season checkpoints for resume
+TRAIN_CSV   = os.path.join(DATA_DIR, "nhl_matches_train.csv")
+CURRENT_CSV = os.path.join(DATA_DIR, "nhl_matches_current.csv")
 load_dotenv(os.path.join(BASE_DIR, "../.env"))
 
 API_WEB = "https://api-web.nhle.com/v1"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 ET = ZoneInfo("America/New_York")
 
-TRAINING_SEASONS = list(range(2021, 2026))
-CURRENT_SEASON   = 2026
+# Rolling year windows — auto-advance with the calendar (see seasons.py)
+TRAINING_SEASONS = training_seasons("nhl")
+CURRENT_SEASON   = current_season("nhl")
 
 # Concurrency / resilience. The NHL API is unauthenticated and tolerant; ~12
 # workers cuts a full backfill from ~80 min to a few minutes. Lower if you ever
@@ -110,7 +114,12 @@ def to_eastern(start_utc: str) -> str:
 # ---------------------------------------------------------------------------
 
 def season_team_abbrevs(label: int) -> list[str]:
-    js = api_get(f"/standings/{label}-04-01")
+    # Standings as of a date that has actually occurred: the season-end date for
+    # completed seasons, or today for the in-progress current season. Querying a
+    # future season-end date returns an empty list, which would leave the current
+    # season with no teams (and no games) for the whole year.
+    query = min(date(label, 4, 1), date.today())
+    js = api_get(f"/standings/{query.isoformat()}")
     if not js:
         return []
     return [t["teamAbbrev"]["default"] for t in js.get("standings", [])]
@@ -557,13 +566,12 @@ def generate_results(current_df: pd.DataFrame) -> None:
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    print("=== Scraping training seasons (2021–2025) via NHL API ===")
+    print(f"=== Scraping training seasons {TRAINING_SEASONS[0]}–{TRAINING_SEASONS[-1]} via NHL API ===")
     training_df = scrape_training_seasons()
     if not training_df.empty:
         training_df = training_df.drop(columns=["GameId"], errors="ignore")  # internal only
-        path = os.path.join(DATA_DIR, "nhl_matches_2021_2025.csv")
-        training_df.to_csv(path, index=False)
-        print(f"\n✓ Saved {path} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)")
+        training_df.to_csv(TRAIN_CSV, index=False)
+        print(f"\n✓ Saved {TRAIN_CSV} ({len(training_df):,} rows, {training_df['Team'].nunique()} teams)")
         if os.getenv("MONGODB_URI"):
             try:
                 from nhl_database import upsert_games
@@ -571,13 +579,12 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"  ⚠ MongoDB write failed: {e}")
 
-    print("\n=== Scraping current season (2026) via NHL API ===")
+    print(f"\n=== Scraping current season ({CURRENT_SEASON}) via NHL API ===")
     current_df = build_current_season(CURRENT_SEASON)
     if not current_df.empty:
-        path = os.path.join(DATA_DIR, "nhl_matches_2026.csv")
-        current_df.to_csv(path, index=False)
+        current_df.to_csv(CURRENT_CSV, index=False)
         completed = current_df["Rslt"].notna().sum()
-        print(f"✓ Saved {path} ({len(current_df):,} rows, {completed} completed)")
+        print(f"✓ Saved {CURRENT_CSV} ({len(current_df):,} rows, {completed} completed)")
         if os.getenv("MONGODB_URI"):
             try:
                 from nhl_database import upsert_games, upsert_schedule
