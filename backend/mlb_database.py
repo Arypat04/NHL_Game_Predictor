@@ -14,6 +14,9 @@ Collections:
   mlb_edges       — edge opportunities surfaced
 """
 
+import pandas as pd
+from pymongo import UpdateOne
+
 from base_database import BaseDatabase
 
 COLLECTIONS = {
@@ -23,6 +26,10 @@ COLLECTIONS = {
     "predictions": "mlb_predictions",
     "edges":       "mlb_edges",
 }
+
+# Raw per-start starting-pitcher rows (the web app reads these instead of
+# re-collecting from the API on startup; the scraper/refresh writes them).
+SP_STARTS_COLLECTION = "mlb_sp_starts"
 
 # Stat columns that must be stored as floats, not strings
 NUMERIC_COLS = {
@@ -84,6 +91,32 @@ db = BaseDatabase(
     key_replacements=(("/", "_"), ("-", "_")),
     connect_label=" (MLB)",
 )
+
+def upsert_sp_starts(df: pd.DataFrame) -> int:
+    """Upsert raw starting-pitcher start rows (keyed by pitcher + game)."""
+    conn = db.get_db()
+    if conn is None or df.empty:
+        return 0
+    ops = []
+    for _, row in df.iterrows():
+        doc = {k: (None if pd.isna(v) else v) for k, v in row.items()}
+        if doc.get("date") is not None:
+            doc["date"] = pd.to_datetime(doc["date"])
+        ops.append(UpdateOne({"pid": doc.get("pid"), "gamePk": doc.get("gamePk")},
+                             {"$set": doc}, upsert=True))
+    return db._bulk_write_chunks(SP_STARTS_COLLECTION, ops)
+
+
+def get_sp_starts() -> pd.DataFrame:
+    """All raw starting-pitcher start rows from MongoDB."""
+    conn = db.get_db()
+    if conn is None:
+        return pd.DataFrame()
+    rows = pd.DataFrame(list(conn[SP_STARTS_COLLECTION].find({}, {"_id": 0})))
+    if not rows.empty and "date" in rows.columns:
+        rows["date"] = pd.to_datetime(rows["date"])
+    return rows
+
 
 # -- module-level API (preserves existing `from mlb_database import ...`) -----
 get_db            = db.get_db

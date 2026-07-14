@@ -172,16 +172,22 @@ def sp_feature_cols(windows: list[int] = SP_WINDOWS) -> list[str]:
     return [f"SP{w}_{r}" for w in windows for r in rates]
 
 
-def season_pitcher_form(year: int, workers: int = MAX_WORKERS) -> pd.DataFrame:
-    """Per-pitcher start log with leakage-safe rolling form (+ team abbrev).
-    This is the source for both the per-game pivot (training) and predict-time
-    lookups (a probable pitcher's latest form as of a date)."""
-    starts = collect_season_starts(year, workers=workers)
+def form_from_starts(starts: pd.DataFrame) -> pd.DataFrame:
+    """Raw per-start rows → leakage-safe rolling-form frame (+ team abbrev).
+    Split out so form can be computed from starts loaded from MongoDB, not only
+    from a fresh API collection."""
     if starts.empty:
         return starts
     starts = add_rolling_form(starts)
     starts["team"] = starts["team_id"].map(TEAM_ID_TO_ABBREV)
     return starts
+
+
+def season_pitcher_form(year: int, workers: int = MAX_WORKERS) -> pd.DataFrame:
+    """Per-pitcher start log with leakage-safe rolling form (+ team abbrev).
+    This is the source for both the per-game pivot (training) and predict-time
+    lookups (a probable pitcher's latest form as of a date)."""
+    return form_from_starts(collect_season_starts(year, workers=workers))
 
 
 def pivot_form_to_game(form: pd.DataFrame) -> pd.DataFrame:

@@ -84,6 +84,35 @@ def _load_schedule_data() -> pd.DataFrame:
     df = pd.read_csv(SCHEDULE_CSV); df["Date"] = pd.to_datetime(df["Date"]); return df
 
 
+def _load_sp_form(seasons: list[int]) -> pd.DataFrame:
+    """Pitcher rolling-form for the given seasons. Reads raw starts from MongoDB
+    (fast — the scraper populates them) and computes rolling form per season, so
+    the web app doesn't re-collect thousands of API calls at startup. Falls back
+    to the local per-season CSV cache / live API collection when offline."""
+    from mlb_pitchers import form_from_starts
+    if os.getenv("MONGODB_URI"):
+        try:
+            from mlb_database import get_sp_starts
+            raw = get_sp_starts()
+            if not raw.empty and "season" in raw.columns:
+                frames = [form_from_starts(raw[raw["season"] == y].copy()) for y in seasons]
+                frames = [f for f in frames if not f.empty]
+                if frames:
+                    print(f"  Loaded pitcher form from MongoDB ({len(raw):,} starts)")
+                    return pd.concat(frames, ignore_index=True)
+        except Exception as e:
+            print(f"  ⚠ Mongo pitcher-form load failed: {e} — using local cache")
+    frames = []
+    for y in seasons:
+        try:
+            f = M.pitcher_form_cached(y)
+            if not f.empty:
+                frames.append(f)
+        except Exception:
+            pass
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # MLBPredictor
 # ---------------------------------------------------------------------------
@@ -120,16 +149,9 @@ class MLBPredictor:
         self._rolled, self._team_feats = M.team_rolling(team_all)
         self._feature_cols = M.feature_cols(self._team_feats)
 
-        # pitcher form frame for live lookups (every season present + current)
-        forms = []
-        for y in sorted(team_all["Season"].apply(M.normalize_season).unique()):
-            try:
-                f = M.pitcher_form_cached(int(y))
-                if not f.empty:
-                    forms.append(f)
-            except Exception:
-                pass
-        self._sp_form = pd.concat(forms, ignore_index=True) if forms else pd.DataFrame()
+        # pitcher form for live lookups — from MongoDB (fast) with local fallback
+        seasons = sorted(int(y) for y in team_all["Season"].apply(M.normalize_season).unique())
+        self._sp_form = _load_sp_form(seasons)
 
         if self._should_retrain():
             print("No saved MLB model — training matchup model from scratch...")

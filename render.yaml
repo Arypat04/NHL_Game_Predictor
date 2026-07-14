@@ -19,6 +19,22 @@ services:
       - key: FRONTEND_URL
         sync: false          # set after frontend deploys
 
+  # ── Weekly scraper (cron) ────────────────────────────────────────────
+  # Refreshes the current season + MLB pitcher starts into MongoDB so the web
+  # app stays fresh and warms up fast. Runs Mondays 09:00 UTC.
+  - type: cron
+    name: nhl-predictor-weekly-refresh
+    runtime: python
+    rootDir: backend
+    schedule: "0 9 * * 1"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python weekly_refresh.py
+    envVars:
+      - key: MONGODB_URI
+        sync: false          # set to the same value as the backend
+      - key: ODDS_API_KEY
+        sync: false
+
   # ── Frontend ─────────────────────────────────────────────────────────
   - type: web
     name: nhl-predictor-frontend
