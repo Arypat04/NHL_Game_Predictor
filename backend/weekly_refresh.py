@@ -43,11 +43,9 @@ def refresh_mlb() -> None:
     from mlb_pitchers import collect_season_starts
     from seasons import all_seasons
 
-    cur = S.scrape_current_season()
-    if not cur.empty:
-        print(f"  schedule: {upsert_schedule(cur):,} upserted")
-        S.generate_results(cur)
-
+    # Pitcher starts FIRST — so the predictor that generate_results loads reads
+    # its pitcher form from MongoDB instead of re-collecting it from the API
+    # (that would double the API work every run).
     print("  collecting starting-pitcher starts...")
     total = 0
     for year in all_seasons("mlb"):
@@ -55,6 +53,11 @@ def refresh_mlb() -> None:
         if not starts.empty:
             total += upsert_sp_starts(starts)
     print(f"  mlb_sp_starts: {total:,} upserted")
+
+    cur = S.scrape_current_season()
+    if not cur.empty:
+        print(f"  schedule: {upsert_schedule(cur):,} upserted")
+        S.generate_results(cur)
 
 
 if __name__ == "__main__":
