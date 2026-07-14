@@ -39,13 +39,17 @@ ENSEMBLE_WEIGHTS = {"rf": 0.5, "et": 0.5}
 
 
 def _build_models() -> dict:
+    # n_jobs=1: single-threaded so training stays within tight memory limits
+    # (Render's free tier reports many CPUs but gives ~512 MB — n_jobs=-1 forks
+    # a copy of the data per worker and OOMs). The models are small; fitting is
+    # ~a minute, and the trained model is then cached to the persistent disk.
     return {
         "rf": RandomForestClassifier(
             n_estimators=300, max_depth=7, min_samples_leaf=15,
-            max_features="sqrt", random_state=42, n_jobs=-1),
+            max_features="sqrt", random_state=42, n_jobs=1),
         "et": ExtraTreesClassifier(
             n_estimators=400, max_depth=12, min_samples_leaf=8,
-            max_features="sqrt", random_state=42, n_jobs=-1),
+            max_features="sqrt", random_state=42, n_jobs=1),
     }
 
 

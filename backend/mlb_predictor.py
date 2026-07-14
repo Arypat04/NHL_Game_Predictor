@@ -41,13 +41,15 @@ ENSEMBLE_WEIGHTS = {"rf": 0.5, "et": 0.5}
 
 
 def _build_models() -> dict:
+    # n_jobs=1: single-threaded to stay within Render's ~512 MB free tier
+    # (n_jobs=-1 forks a data copy per worker and OOMs). Models are small.
     return {
         "rf": RandomForestClassifier(
             n_estimators=300, max_depth=7, min_samples_leaf=8,
-            max_features="sqrt", random_state=42, n_jobs=-1),
+            max_features="sqrt", random_state=42, n_jobs=1),
         "et": ExtraTreesClassifier(
             n_estimators=400, max_depth=12, min_samples_leaf=8,
-            max_features="sqrt", random_state=42, n_jobs=-1),
+            max_features="sqrt", random_state=42, n_jobs=1),
     }
 
 
