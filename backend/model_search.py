@@ -27,7 +27,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import (
     ExtraTreesClassifier, GradientBoostingClassifier,
     HistGradientBoostingClassifier, RandomForestClassifier,
@@ -36,7 +35,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-from xgboost import XGBClassifier
+
+# xgboost lives in requirements-dev.txt, not requirements.txt — the deployed app
+# doesn't use it (the search showed boosting loses to bagged trees here), so it's
+# optional and its configs are simply skipped when it isn't installed.
+try:
+    from xgboost import XGBClassifier
+    HAVE_XGB = True
+except ImportError:
+    HAVE_XGB = False
 
 warnings.filterwarnings("ignore")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,7 +83,6 @@ def load_full(sport: str):
 
     if sport == "mlb":
         import mlb_matchup as M
-        from mlb_pitchers import sp_feature_cols
         raw = pd.read_csv(M.TRAIN_CSV)
         raw["Date"] = pd.to_datetime(raw["Date"])
         pool = ["RD", "R", "OBP", "SLG", "BABIP", "HR", "BB", "SO",
@@ -103,7 +109,7 @@ def build_dataset(M, raw, windows, feats):
 # ---------------------------------------------------------------------------
 
 def model_zoo() -> dict:
-    return {
+    families = {
         "logreg": (
             lambda p: make_pipeline(StandardScaler(),
                                     LogisticRegression(max_iter=2000, C=p["C"])),
@@ -133,14 +139,16 @@ def model_zoo() -> dict:
                 l2_regularization=p["l2"], random_state=42),
             {"n": [300, 600], "lr": [0.02, 0.05], "d": [3, 6], "l2": [0.0, 1.0]},
         ),
-        "xgb": (
+    }
+    if HAVE_XGB:
+        families["xgb"] = (
             lambda p: XGBClassifier(
                 n_estimators=p["n"], learning_rate=p["lr"], max_depth=p["d"],
                 subsample=0.8, colsample_bytree=0.8, min_child_weight=p["mcw"],
                 n_jobs=-1, random_state=42, verbosity=0),
             {"n": [300, 500], "lr": [0.02, 0.04], "d": [3, 4], "mcw": [8, 15]},
-        ),
-    }
+        )
+    return families
 
 
 def _grid(param_grid):

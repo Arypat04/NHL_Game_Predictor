@@ -146,9 +146,6 @@ class MLBPredictor:
         self._window: list[int]       = []
         self._load_and_train()
 
-    def _should_retrain(self) -> bool:
-        return not os.path.exists(MODEL_PATH)
-
     def _load_and_train(self) -> None:
         team_full = _load_team_data()
         team_full["Season"] = team_full["Season"].apply(M.normalize_season)

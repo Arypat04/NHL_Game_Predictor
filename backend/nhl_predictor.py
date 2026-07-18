@@ -16,7 +16,6 @@ import os
 import warnings
 
 import joblib
-import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
@@ -128,9 +127,6 @@ class NHLPredictor:
         self._schedule: pd.DataFrame  = pd.DataFrame()
         self._window: list[int]       = []
         self._load_and_train()
-
-    def _should_retrain(self) -> bool:
-        return not os.path.exists(MODEL_PATH)
 
     def _load_and_train(self) -> None:
         # all team-game logs incl. rich current-season completed games

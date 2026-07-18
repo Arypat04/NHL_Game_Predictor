@@ -1,0 +1,20 @@
+# Lint baseline: `ruff check backend/`
+#
+# Deliberately narrow. The point is to catch real defects (unused imports,
+# undefined names, shadowed builtins) — not to reformat a codebase that already
+# reads consistently.
+
+line-length = 100
+
+[lint]
+select = ["F", "E", "W", "I"]
+ignore = [
+    "E501",   # long lines: comments here carry reasoning, wrapping hurts them
+    "E702",   # `a = 1; b = 2` — used deliberately for tightly-related one-liners
+    "E731",   # lambda assignment — the model_search zoo is built from lambdas
+    "I001",   # import sorting: not worth the churn on existing files
+]
+
+[lint.per-file-ignores]
+# Tests assert on module internals and build deliberately odd frames.
+"tests/*" = ["E402"]

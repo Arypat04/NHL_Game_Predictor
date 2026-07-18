@@ -200,7 +200,7 @@ def scrape_team_game_log(team_id: int, year: int) -> pd.DataFrame:
 
 
 def scrape_season(year: int, include_unfinished: bool = False) -> pd.DataFrame:
-    print(f"  Fetching schedule...")
+    print("  Fetching schedule...")
     schedule = scrape_schedule(year, include_unfinished=include_unfinished)
     if schedule.empty:
         print(f"  ⚠ No schedule data for {year}")
@@ -209,7 +209,7 @@ def scrape_season(year: int, include_unfinished: bool = False) -> pd.DataFrame:
     completed = schedule["Rslt"].notna().sum()
     print(f"  Schedule: {len(schedule)} rows ({completed} with results)")
 
-    print(f"  Fetching game logs for 30 teams...")
+    print("  Fetching game logs for 30 teams...")
     log_frames = []
     for team_id, abbrev in TEAM_ID_TO_ABBREV.items():
         log = scrape_team_game_log(team_id, year)
@@ -252,7 +252,7 @@ def scrape_training_seasons(years: list[int] = TRAINING_SEASONS) -> pd.DataFrame
     if missing:
         print(f"\n⚠ Missing teams: {sorted(missing)}")
     else:
-        print(f"\n✓ All 30 teams present")
+        print("\n✓ All 30 teams present")
     return combined
 
 

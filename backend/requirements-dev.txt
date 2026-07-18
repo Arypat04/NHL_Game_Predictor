@@ -1,2 +1,7 @@
+# Local tooling only. Kept out of requirements.txt so the Render build and the
+# weekly GitHub Actions run stay small — neither the API nor weekly_refresh.py
+# imports any of these.
 -r requirements.txt
 pytest>=8
+xgboost      # model_search.py only, to compare boosting vs the bagged trees
+ruff         # lint

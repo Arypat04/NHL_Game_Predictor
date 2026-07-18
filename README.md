@@ -1,94 +1,124 @@
-# NHL Game Prediction Model
+# Line Lab
 
-A machine learning pipeline that predicts NHL game outcomes using historical data and advanced feature engineering techniques.
+A sports betting screener: it predicts moneyline outcomes for **NHL** and **MLB**
+games, compares its probabilities against bookmaker odds, and surfaces the gaps
+as "edges".
 
-## 📊 Performance Metrics
-- **Accuracy**: 56.7%
-- **Precision**: 57.0%
-- **Data Size**: 12,000+ games across 5 seasons (2021-2025)
-- **Improvement**: 12% above baseline random prediction
+FastAPI backend + React (Vite) frontend + MongoDB Atlas, deployed on Render.
 
-## 🚀 Features
+## How it predicts
 
-### Data Collection
-- Automated web scraping from Hockey-Reference.com
-- Handles complex multi-level HTML tables
-- Processes team relocations (Arizona → Utah)
-- Collects 32 NHL teams across multiple seasons
+Each sport uses a **matchup model** — one row per game built from *both* teams'
+leakage-safe rolling form (every rolling feature is computed with `closed="left"`
+so a game never sees itself). A single calibrated RandomForest per sport turns
+that into P(home win).
 
-### Feature Engineering
-- **40+ predictive features** including:
-  - Rolling averages (goals, shots, penalties, advanced stats)
-  - Opponent strength metrics
-  - Efficiency ratios (shooting %, save %, power play conversion)
-  - Home/away performance differentials
-  - Recent form indicators
+What actually carries signal, measured rather than assumed:
 
-### Model Architecture
-- Random Forest classifier with optimized hyperparameters
-- Binary classification (Win/Loss)
-- Cross-validation for model selection
-- Feature importance analysis
+| Sport | Dominant signal | Notes |
+|---|---|---|
+| NHL | Team shot-share (Corsi/Fenwick) | Goalie and top-scorer features were built, measured, and **dropped** — possession already prices them in |
+| MLB | The **starting pitcher** | ~50% of feature importance. Team pitching stats are redundant once the actual starter's form is a feature |
 
-## 🛠️ Tech Stack
-- **Python**: Core programming language
-- **Scikit-learn**: Machine learning framework
-- **Pandas**: Data manipulation and analysis
-- **BeautifulSoup**: Web scraping
-- **Requests**: HTTP requests for data collection
+Rolling windows differ by sport because the sports differ: NHL uses `[5, 10, 20]`
+(hockey form is streaky), MLB uses `[10, 20, 40]` (baseball stabilizes slowly).
 
-## 📁 Project Structure
+## Accuracy
+
+Season walk-forward cross-validation — the honest numbers:
+
+| Sport | Accuracy | AUC |
+|---|---|---|
+| NHL | ~0.585 | ~0.614 |
+| MLB | ~0.559 | ~0.579 |
+
+Both sports sit at their **data ceiling**. An exhaustive search (2040 NHL / 816
+MLB configurations across logreg, RF, ExtraTrees, GB, HistGB, XGBoost, stacking,
+MLP and SVM) found 117 of 2040 configs within 0.005 accuracy of the best — all
+inside the ~0.017 season-to-season noise band. Model choice is exhausted; further
+accuracy needs new *data* (confirmed lineups, injuries), not new models.
+
+> The "season accuracy" shown in the UI back-tests on games the model trained on,
+> so it reads slightly optimistic. Trust the CV numbers above.
+
+## Layout
+
 ```
-├── scraper.py              # Web scraping pipeline
-├── prediction.ipynb       # Model training and evaluation
-├── nhl_matches_2021_2025.csv  # Processed dataset
-└── README.md
+backend/
+  main.py                FastAPI app: /predictions /results /edges /status
+  seasons.py             single source of truth for season years (rolling window)
+  base_database.py       shared MongoDB layer + trained-model cache
+  {nhl,mlb}_database.py  per-sport collections and rename maps
+  {nhl,mlb}_scraper.py   data collection (official APIs)
+  {nhl,mlb}_matchup.py   rolling features + one-row-per-game dataset
+  {nhl,mlb}_predictor.py training, model load/cache, prediction
+  mlb_pitchers.py        per-pitcher rolling form (MLB's key feature)
+  model_search.py        offline model/feature search (research tool)
+  weekly_refresh.py      incremental MongoDB refresh
+  tests/                 per-sport tests + shared data-integrity guards
+frontend/                React + Vite UI
+.github/workflows/       weekly refresh (free scheduled runner)
 ```
 
-## 🔧 Installation & Usage
+## Data sources
 
-### Prerequisites
+Both are **official public APIs** — no HTML scraping. (An earlier version scraped
+Hockey-Reference; it was validated stat-by-stat against the NHL API and retired.)
+
+- NHL: `api-web.nhle.com` — standings, schedules, boxscores, play-by-play
+  (5v5 possession is reconstructed from PBP events)
+- MLB: `statsapi.mlb.com` — schedules, team game logs, pitcher game logs
+- Odds: The Odds API (free tier — 500 requests/month)
+
+## Running it
+
 ```bash
-pip install pandas scikit-learn beautifulsoup4 requests numpy
+python -m venv venv && venv/Scripts/activate      # Windows
+pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+# .env at the repo root
+#   MONGODB_URI=...
+#   ODDS_API_KEY=...
+
+cd backend && uvicorn main:app --reload            # API on :8000
+cd frontend && npm install && npm run dev          # UI  on :5173
+
+pytest backend/tests -q                            # tests (offline, no network)
 ```
 
-### Running the Scraper
-```python
-python scraper.py
+The predictors work without MongoDB, falling back to CSVs in `data/`.
+
+### Collecting data
+
+```bash
+python backend/nhl_scraper.py     # full history (resumable, cached per season)
+python backend/mlb_scraper.py
+python backend/weekly_refresh.py  # incremental — only what changed
 ```
-This will:
-- Scrape NHL standings and team URLs
-- Collect game logs for all teams
-- Process and clean the data
-- Export to CSV format
 
-### Training the Model
-Open `prediction.ipynb` and run all cells to:
-- Load and preprocess data
-- Engineer features
-- Train multiple model configurations
-- Evaluate performance and feature importance
+`weekly_refresh.py` runs every Monday on GitHub Actions (free). It's incremental:
+games already in MongoDB are never re-fetched, and completed pitcher seasons are
+skipped, since finished games are immutable.
 
-## 📈 Model Performance
+## Deployment notes
 
-### Key Insights
-- **Most Important Features**: Opponent strength, recent form, efficiency metrics
-- **Home Advantage**: Significant predictor in model
-- **Rolling Windows**: 3-game averages provide optimal signal-to-noise ratio
+Render's **free tier has no persistent disk**, so the filesystem is wiped on every
+spin-down. Two consequences shaped the design:
 
-### Feature Importance (Top 5)
-1. Opponent strength differential
-2. Recent win percentage (last 10 games)
-3. Shot efficiency trends
-4. Home/away status
-5. Power play conversion rate
+1. **Models are cached in MongoDB** (`base_database.save_model/load_model`) and
+   restored on cold start in ~2s instead of being retrained. They're stored as
+   single BSON documents, which only works because the deployed models are ~4 MB.
+2. **Models are deliberately lean** — one RandomForest, `n_jobs=1`. The previous
+   RF+ExtraTrees blend OOM'd the 512 MB dyno (`n_jobs=-1` forks a copy of the data
+   per worker), and the accuracy difference is inside the noise band.
 
-## 🎯 Future Improvements
-- [ ] Add player injury data
-- [ ] Incorporate betting odds for calibration
-- [ ] Real-time prediction API
-- [ ] Expand to playoff predictions
-- [ ] Add confidence intervals
+Warmup runs in a background thread so the port binds immediately; endpoints return
+`503` until their sport is ready.
 
-## 📝 Data Sources
-- [Hockey-Reference.com](https://www.hockey-reference.com/) - Historical game data and statistics
+## Roadmap
+
+- [x] NHL moneyline
+- [x] MLB moneyline
+- [ ] NBA + NFL moneyline (`seasons.py` already has both; NFL's QB should play the
+      role MLB's starting pitcher does)
+- [ ] Player props
