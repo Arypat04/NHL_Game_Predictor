@@ -7,10 +7,10 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    disk:
-      name: model-storage
-      mountPath: /opt/render/project/src/backend
-      sizeGB: 1
+    # No persistent disk: the free tier doesn't support one, so the filesystem is
+    # ephemeral and every spin-down loses the trained models. Instead they're
+    # cached in MongoDB (base_database.save_model/load_model) and restored on
+    # cold start in a couple of seconds rather than retrained.
     envVars:
       - key: ODDS_API_KEY
         sync: false          # set manually in Render dashboard

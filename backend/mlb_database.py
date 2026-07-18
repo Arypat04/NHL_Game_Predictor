@@ -107,6 +107,21 @@ def upsert_sp_starts(df: pd.DataFrame) -> int:
     return db._bulk_write_chunks(SP_STARTS_COLLECTION, ops)
 
 
+def sp_start_counts() -> dict[int, int]:
+    """{season: rows stored} for mlb_sp_starts — lets the weekly refresh skip
+    completed seasons, whose starts are immutable once the season ends."""
+    conn = db.get_db()
+    if conn is None:
+        return {}
+    out = {}
+    for season in conn[SP_STARTS_COLLECTION].distinct("season"):
+        try:
+            out[int(season)] = conn[SP_STARTS_COLLECTION].count_documents({"season": season})
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def get_sp_starts() -> pd.DataFrame:
     """All raw starting-pitcher start rows from MongoDB."""
     conn = db.get_db()
@@ -128,4 +143,6 @@ log_predictions   = db.log_predictions
 log_results       = db.log_results
 log_edges         = db.log_edges
 get_season_stats  = db.get_season_stats
+save_model        = db.save_model
+load_model        = db.load_model
 _clean_doc        = db._clean_doc

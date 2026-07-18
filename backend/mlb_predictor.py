@@ -66,10 +66,19 @@ def _load_team_data() -> pd.DataFrame:
     if df is None:
         print("  Loading team-game data from CSV...")
         df = pd.read_csv(TRAIN_CSV); df["Date"] = pd.to_datetime(df["Date"])
+    # One row per (Team, Date) — same invariant as NHL. Rolling form averages a
+    # team's games in date order, so a duplicated game silently corrupts the
+    # features rather than just adding a row.
+    df = df.copy()
+    df["Season"] = df["Season"].apply(M.normalize_season)
+    before = len(df)
+    df = df.sort_values(["Team", "Date"]).drop_duplicates(subset=["Team", "Date"], keep="first")
+    if before != len(df):
+        print(f"  Dropped {before - len(df):,} duplicate team-game rows")
+
     # data-driven rolling window — newest TRAIN_WINDOW+1 seasons present
-    labels = df["Season"].apply(M.normalize_season)
-    cur = int(labels.max())
-    return df[labels.between(cur - TRAIN_WINDOW, cur)].copy()
+    cur = int(df["Season"].max())
+    return df[df["Season"].between(cur - TRAIN_WINDOW, cur)].copy()
 
 
 def _load_schedule_data() -> pd.DataFrame:
@@ -161,24 +170,48 @@ class MLBPredictor:
         seasons = sorted(int(y) for y in team_all["Season"].apply(M.normalize_season).unique())
         self._sp_form = _load_sp_form(seasons)
 
-        if self._should_retrain():
-            print("No saved MLB model — training matchup model from scratch...")
+        saved = self._load_existing()
+        if saved is None:
+            print("No usable MLB model — training matchup model from scratch...")
             self._train_and_save(team_full)
         else:
-            print("Loading saved model...")
-            saved = joblib.load(MODEL_PATH)
-            if saved.get("feature_cols") != self._feature_cols:
-                print("  ⚠ Saved feature set is stale — retraining...")
-                self._train_and_save(team_full)
-            elif saved.get("seasons") != self._window:
-                print("  ⚠ Season window has rolled over — retraining...")
-                self._train_and_save(team_full)
-            else:
-                self.models  = saved["models"]
-                self._medians = saved["medians"]
-                print("✓ Model loaded.\n")
+            self.models   = saved["models"]
+            self._medians = saved["medians"]
 
         self._load_schedule()
+
+    def _meta(self) -> dict:
+        """Identity of a trained model — a cached one is only reusable if these
+        match, so a feature-set change or season rollover forces a retrain."""
+        return {"feature_cols": self._feature_cols, "seasons": self._window}
+
+    def _load_existing(self) -> dict | None:
+        """Local model file, else the MongoDB cache. None if neither matches the
+        current feature set / season window."""
+        meta = self._meta()
+        if os.path.exists(MODEL_PATH):
+            try:
+                saved = joblib.load(MODEL_PATH)
+                if saved.get("feature_cols") != self._feature_cols:
+                    print("  ⚠ Saved feature set is stale — retraining...")
+                elif saved.get("seasons") != self._window:
+                    print("  ⚠ Season window has rolled over — retraining...")
+                else:
+                    print("✓ Model loaded.\n")
+                    return saved
+            except Exception as e:
+                print(f"  ⚠ Could not read saved model: {e}")
+
+        # Ephemeral filesystem (Render free tier) — restore from MongoDB rather
+        # than retraining on every cold start.
+        if os.getenv("MONGODB_URI"):
+            try:
+                from mlb_database import load_model
+                if load_model("mlb_model", MODEL_PATH, meta):
+                    return joblib.load(MODEL_PATH)
+            except Exception as e:
+                print(f"  ⚠ MongoDB model cache unavailable: {e}")
+        return None
 
     def _train_and_save(self, team: pd.DataFrame) -> None:
         game, cols = M.build_matchup(team)
@@ -193,7 +226,14 @@ class MLBPredictor:
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,
                      "team_feats": self._team_feats, "medians": self._medians,
                      "seasons": self._window}, MODEL_PATH)
-        print("✓ Model trained and saved.\n")
+        print("✓ Model trained and saved.")
+        if os.getenv("MONGODB_URI"):
+            try:
+                from mlb_database import save_model
+                save_model("mlb_model", MODEL_PATH, self._meta())
+            except Exception as e:
+                print(f"  ⚠ Could not cache model: {e}")
+        print()
 
     def _load_schedule(self) -> None:
         schedule = _load_schedule_data()

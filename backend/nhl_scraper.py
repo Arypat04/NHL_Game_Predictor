@@ -323,13 +323,19 @@ def _write_cache(label: int, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 def scrape_season_gamelogs(label: int, max_games: int | None = None,
-                           workers: int = MAX_WORKERS) -> pd.DataFrame:
+                           workers: int = MAX_WORKERS,
+                           skip_gids: set[int] | None = None) -> pd.DataFrame:
     """
     Full per-game stat rows for one season (training schema).
 
     Fetches games concurrently and checkpoints to a per-season cache, so a run
     can be interrupted and resumed — already-scraped games are skipped, and
     completed historical seasons cost nothing to re-run.
+
+    `skip_gids` adds games to that skip-list from outside the on-disk cache
+    (the weekly refresh seeds it from MongoDB, since CI runners have no cache).
+    Skipped games are absent from the returned frame — callers get only what was
+    newly fetched.
     """
     games = enumerate_games(label)
     ids   = sorted(games)
@@ -337,6 +343,8 @@ def scrape_season_gamelogs(label: int, max_games: int | None = None,
         ids = ids[:max_games]
 
     rows, done = _load_cache(label)
+    if skip_gids:
+        done = done | set(skip_gids)
     todo = [gid for gid in ids if gid not in done]
     print(f"  {label}: {len(ids)} games — {len(done)} cached, {len(todo)} to fetch")
 
@@ -417,6 +425,44 @@ def build_current_season(label: int = CURRENT_SEASON) -> pd.DataFrame:
         combined = combined.sort_values(["Team", "Date"]).reset_index(drop=True)
         combined.insert(0, "GP", combined.groupby("Team").cumcount() + 1)
     return combined
+
+
+def new_completed_games(label: int, have_keys: set[tuple[str, str]],
+                        workers: int = MAX_WORKERS) -> pd.DataFrame:
+    """
+    Rich per-game rows for COMPLETED games not already stored (training schema).
+
+    Used by the weekly refresh: enumerating the season is cheap (one call per
+    team) but reconstructing a game costs ~2 API calls, so games already in
+    MongoDB are skipped entirely. On a fully-scraped season this fetches nothing.
+    """
+    games = enumerate_games(label)
+    skip = set()
+    for gid, g in games.items():
+        date = str(g.get("gameDate", ""))[:10]
+        home = norm(g["homeTeam"]["abbrev"])
+        away = norm(g["awayTeam"]["abbrev"])
+        if (date, home) in have_keys and (date, away) in have_keys:
+            skip.add(gid)
+    print(f"  {label}: {len(games)} games — {len(skip)} already stored, {len(games) - len(skip)} to check")
+
+    df = scrape_season_gamelogs(label, workers=workers, skip_gids=skip)
+    # scrape_season_gamelogs also returns anything in its on-disk cache, so drop
+    # the skipped games explicitly — otherwise a machine with a warm cache
+    # re-upserts the whole season it was just told it already had.
+    if not df.empty and "GameId" in df.columns:
+        df = df[~df["GameId"].isin(skip)]
+    if df.empty:
+        return df
+
+    time_map = {gid: to_eastern(g.get("startTimeUTC", "")) for gid, g in games.items()}
+    df["Season"]   = label
+    df["Time"]     = df["GameId"].map(time_map)
+    df["Opponent"] = df["Opp"].map(ABBREV_TO_NAME).fillna(df["Opp"])
+    # Drop Gtm: scrape_season_gamelogs numbers it by cumcount over the rows it
+    # fetched, which is meaningless for a partial (incremental) set. Better to
+    # omit it than to write a wrong game number.
+    return df.drop(columns=["GameId", "Gtm"], errors="ignore")
 
 
 def build_schedule_df(label: int = CURRENT_SEASON) -> pd.DataFrame:

@@ -82,12 +82,23 @@ def _load_team_data() -> pd.DataFrame:
         except Exception:
             pass
 
+    # Normalize the season label FIRST: MongoDB accumulated the same games under
+    # two formats (4-digit label 2025 and 8-digit API id 20242025), so without
+    # this each game appears twice. That's not just wasted rows — team_rolling
+    # averages a team's games in date order, so duplicates corrupt the rolling
+    # form features themselves. One row per (Team, Date) is the invariant.
+    df = df.copy()
+    df["Season"] = df["Season"].apply(M.normalize_season)
+    before = len(df)
+    df = df.sort_values(["Team", "Date"]).drop_duplicates(subset=["Team", "Date"], keep="first")
+    if before != len(df):
+        print(f"  Dropped {before - len(df):,} duplicate team-game rows")
+
     # keep only the newest TRAIN_WINDOW+1 seasons present — data-driven, so the
     # window always matches whatever the scraper collected and the oldest season
     # drops out automatically (even when MongoDB has accumulated older seasons)
-    labels = df["Season"].apply(M.normalize_season)
-    cur = int(labels.max())
-    return df[labels.between(cur - TRAIN_WINDOW, cur)].copy()
+    cur = int(df["Season"].max())
+    return df[df["Season"].between(cur - TRAIN_WINDOW, cur)].copy()
 
 
 def _load_schedule_data() -> pd.DataFrame:
@@ -130,23 +141,49 @@ class NHLPredictor:
         self._rolled, self._team_feats = M.team_rolling(team)
         self._feature_cols = M.feature_cols(self._team_feats)
 
-        if self._should_retrain():
-            print("No saved NHL model — training matchup model from scratch...")
+        saved = self._load_existing()
+        if saved is None:
+            print("No usable NHL model — training matchup model from scratch...")
             self._train_and_save(team)
         else:
-            print("Loading saved model...")
-            saved = joblib.load(MODEL_PATH)
-            if saved.get("feature_cols") != self._feature_cols:
-                print("  ⚠ Saved feature set is stale — retraining...")
-                self._train_and_save(team)
-            elif saved.get("seasons") != self._window:
-                print("  ⚠ Season window has rolled over — retraining...")
-                self._train_and_save(team)
-            else:
-                self.models = saved["models"]
-                print("✓ Model loaded.\n")
+            self.models = saved["models"]
 
         self._load_schedule()
+
+    def _meta(self) -> dict:
+        """Identity of a trained model — a cached one is only reusable if these
+        match, so a feature-set change or season rollover forces a retrain."""
+        return {"feature_cols": self._feature_cols, "seasons": self._window}
+
+    def _load_existing(self) -> dict | None:
+        """Local model file, else the MongoDB cache. Returns None if neither has
+        a model matching the current feature set / season window."""
+        meta = self._meta()
+        if os.path.exists(MODEL_PATH):
+            try:
+                saved = joblib.load(MODEL_PATH)
+                if saved.get("feature_cols") != self._feature_cols:
+                    print("  ⚠ Saved feature set is stale — retraining...")
+                elif saved.get("seasons") != self._window:
+                    print("  ⚠ Season window has rolled over — retraining...")
+                else:
+                    print("✓ Model loaded.\n")
+                    return saved
+            except Exception as e:
+                print(f"  ⚠ Could not read saved model: {e}")
+
+        # Hosts with an ephemeral filesystem (Render's free tier has no
+        # persistent disk) start every cold boot with no model file. Restoring
+        # the ~4 MB pickle from MongoDB takes a second or two, versus minutes of
+        # retraining on a throttled CPU.
+        if os.getenv("MONGODB_URI"):
+            try:
+                from nhl_database import load_model
+                if load_model("nhl_model", MODEL_PATH, meta):
+                    return joblib.load(MODEL_PATH)
+            except Exception as e:
+                print(f"  ⚠ MongoDB model cache unavailable: {e}")
+        return None
 
     def _train_and_save(self, team: pd.DataFrame) -> None:
         game, cols = M.build_matchup(team)
@@ -159,7 +196,15 @@ class NHLPredictor:
             self.models[name] = cal
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,
                      "team_feats": self._team_feats, "seasons": self._window}, MODEL_PATH)
-        print("✓ Model trained and saved.\n")
+        print("✓ Model trained and saved.")
+        # Publish to MongoDB so the next cold start restores instead of retraining
+        if os.getenv("MONGODB_URI"):
+            try:
+                from nhl_database import save_model
+                save_model("nhl_model", MODEL_PATH, self._meta())
+            except Exception as e:
+                print(f"  ⚠ Could not cache model: {e}")
+        print()
 
     def _load_schedule(self) -> None:
         schedule = _load_schedule_data()

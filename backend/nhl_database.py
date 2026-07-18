@@ -61,6 +61,33 @@ db = BaseDatabase(
 )
 
 # -- module-level API (preserves existing `from nhl_database import ...`) -----
+def get_game_keys() -> set[tuple[str, str]]:
+    """Every stored ("YYYY-MM-DD", TEAM) pair in the games collection.
+
+    The weekly refresh runs on an ephemeral CI runner, so nhl_scraper's on-disk
+    cache is always empty and it would re-reconstruct the entire season (~2 API
+    calls per game) every run. Seeding the skip-list from MongoDB instead makes
+    the refresh incremental. Deliberately unfiltered by season: the collection
+    holds both 4-digit and 8-digit season formats, and (date, team) is
+    unambiguous regardless.
+    """
+    import pandas as pd
+
+    conn = db.get_db()
+    if conn is None:
+        return set()
+    keys = set()
+    for doc in conn[COLLECTIONS["games"]].find({}, {"_id": 0, "date": 1, "team": 1}):
+        date, team = doc.get("date"), doc.get("team")
+        if date is None or team is None:
+            continue
+        try:
+            keys.add((str(pd.to_datetime(date).date()), str(team)))
+        except Exception:
+            continue
+    return keys
+
+
 get_db            = db.get_db
 upsert_games      = db.upsert_games
 upsert_schedule   = db.upsert_schedule
@@ -70,4 +97,6 @@ log_predictions   = db.log_predictions
 log_results       = db.log_results
 log_edges         = db.log_edges
 get_season_stats  = db.get_season_stats
+save_model        = db.save_model
+load_model        = db.load_model
 _clean_doc        = db._clean_doc

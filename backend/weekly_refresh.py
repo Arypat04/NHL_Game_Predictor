@@ -22,33 +22,50 @@ import os
 def refresh_nhl() -> None:
     print("\n=== NHL: current season → MongoDB ===")
     import nhl_scraper as S
-    from nhl_database import upsert_games, upsert_schedule
+    from nhl_database import get_game_keys, upsert_games, upsert_schedule
     from seasons import current_season
 
-    cur = S.build_current_season(current_season("nhl"))
-    if cur.empty:
+    label = current_season("nhl")
+
+    # Schedule + results are cheap (one API call per team, no play-by-play), so
+    # rebuild them in full every run — that keeps upcoming games and any
+    # corrected scores current.
+    sched = S.build_schedule_df(label)
+    if sched.empty:
         print("  (no current-season games available yet)")
         return
-    done = cur.dropna(subset=["Rslt"])
-    if not done.empty:
-        print(f"  games:    {upsert_games(done):,} upserted")
-    print(f"  schedule: {upsert_schedule(cur):,} upserted")
-    S.generate_results(cur)
+    print(f"  schedule: {upsert_schedule(sched):,} upserted")
+
+    # Rich per-game stats are expensive (~2 API calls per game), and a played
+    # game never changes — so only reconstruct games MongoDB doesn't have yet.
+    fresh = S.new_completed_games(label, get_game_keys())
+    if fresh.empty:
+        print("  games:    already up to date")
+    else:
+        print(f"  games:    {upsert_games(fresh):,} upserted")
+
+    S.generate_results(sched)
 
 
 def refresh_mlb() -> None:
     print("\n=== MLB: current season + pitcher starts → MongoDB ===")
     import mlb_scraper as S
-    from mlb_database import upsert_schedule, upsert_sp_starts
+    from mlb_database import sp_start_counts, upsert_schedule, upsert_sp_starts
     from mlb_pitchers import collect_season_starts
-    from seasons import all_seasons
+    from seasons import all_seasons, current_season
 
     # Pitcher starts FIRST — so the predictor that generate_results loads reads
     # its pitcher form from MongoDB instead of re-collecting it from the API
     # (that would double the API work every run).
-    print("  collecting starting-pitcher starts...")
-    total = 0
+    this_year = current_season("mlb")
+    stored    = sp_start_counts()
+    total     = 0
     for year in all_seasons("mlb"):
+        # A finished season's starts are immutable; re-collecting all six every
+        # week was ~5/6 wasted work (and API calls) for identical data.
+        if year != this_year and stored.get(year):
+            print(f"  {year}: {stored[year]:,} starts already stored — skipping (season complete)")
+            continue
         starts = collect_season_starts(year)
         if not starts.empty:
             total += upsert_sp_starts(starts)

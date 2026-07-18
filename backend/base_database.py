@@ -11,12 +11,20 @@ import os
 from datetime import datetime
 
 import pandas as pd
+from bson.binary import Binary
 from pymongo import ASCENDING, MongoClient, UpdateOne
 from pymongo.errors import ConnectionFailure
 
 # MongoDB Atlas free tier times out on bulk writes larger than ~1000 rows,
 # so every bulk operation is written in chunks of this size.
 CHUNK_SIZE = 500
+
+# Trained models are cached here so a host with an ephemeral filesystem (Render's
+# free tier has no persistent disk) can restore one on cold start instead of
+# retraining. Models are single documents, so they must stay under BSON's 16 MB
+# limit — the deployed single-RandomForest models are ~4 MB.
+MODEL_COLLECTION = "models"
+MAX_MODEL_BYTES  = 15_000_000
 
 
 class BaseDatabase:
@@ -68,6 +76,56 @@ class BaseDatabase:
                 print(f"⚠ MongoDB connection failed: {e}")
                 self._db = None
         return self._db
+
+    # -- trained-model cache -------------------------------------------------
+
+    def save_model(self, name: str, path: str, meta: dict) -> bool:
+        """Store a trained model file so the next cold start can skip training.
+
+        `meta` (feature columns + season window) is stored alongside it and must
+        match on load, so a stale cache is never served after the feature set or
+        the training window changes.
+        """
+        conn = self.get_db()
+        if conn is None:
+            return False
+        try:
+            with open(path, "rb") as fh:
+                blob = fh.read()
+            if len(blob) > MAX_MODEL_BYTES:
+                print(f"  ⚠ model too big to cache in MongoDB ({len(blob)/1e6:.1f} MB)")
+                return False
+            conn[MODEL_COLLECTION].replace_one(
+                {"_id": name},
+                {"_id": name, "blob": Binary(blob), "meta": meta,
+                 "saved_at": datetime.now()},
+                upsert=True,
+            )
+            print(f"  ✓ model cached in MongoDB ({len(blob)/1e6:.1f} MB)")
+            return True
+        except Exception as e:
+            print(f"  ⚠ could not cache model in MongoDB: {e}")
+            return False
+
+    def load_model(self, name: str, path: str, meta: dict) -> bool:
+        """Write the cached model to `path` if MongoDB holds one matching `meta`."""
+        conn = self.get_db()
+        if conn is None:
+            return False
+        try:
+            doc = conn[MODEL_COLLECTION].find_one({"_id": name})
+            if not doc:
+                return False
+            if doc.get("meta") != meta:
+                print("  ⚠ cached model is stale (features or season window changed)")
+                return False
+            with open(path, "wb") as fh:
+                fh.write(doc["blob"])
+            print(f"  ✓ model restored from MongoDB ({len(doc['blob'])/1e6:.1f} MB)")
+            return True
+        except Exception as e:
+            print(f"  ⚠ could not restore cached model: {e}")
+            return False
 
     def _ensure_indexes(self) -> None:
         db = self._db
