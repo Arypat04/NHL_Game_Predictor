@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 import nhl_matchup as M
 from nhl_teams import TEAM_NAME_TO_ABBREV  # re-exported for scraper/main imports
@@ -32,23 +32,20 @@ MODEL_PATH   = os.path.join(BASE_DIR, "nhl_model.pkl")
 TRAIN_CSV    = os.path.join(BASE_DIR, "../data/nhl_matches_train.csv")
 SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/nhl_matches_current.csv")
 
-# The exhaustive search (model_search.py) found bagged trees (RandomForest,
-# ExtraTrees) clearly beat boosting (XGBoost/GB) on this noisy data — the old
-# xgb-heavy ensemble was over-weighting the weaker models. Blend the two winners.
-ENSEMBLE_WEIGHTS = {"rf": 0.5, "et": 0.5}
+# The exhaustive search (model_search.py) found bagged trees clearly beat
+# boosting here, and that the whole top cluster (117 of 2040 configs) sits inside
+# the season-to-season noise band — a single RandomForest was in fact the best
+# individual config. So we deploy one lean RandomForest: it costs nothing
+# measurable in accuracy and trains ~8x cheaper, which matters because the web
+# dyno has ~512 MB / a fraction of a CPU (n_jobs=-1 + a big ensemble OOM'd it).
+ENSEMBLE_WEIGHTS = {"rf": 1.0}
+CALIBRATION_CV = 2      # 2 folds instead of 3 — halves fits, same calibration idea
 
 
 def _build_models() -> dict:
-    # n_jobs=1: single-threaded so training stays within tight memory limits
-    # (Render's free tier reports many CPUs but gives ~512 MB — n_jobs=-1 forks
-    # a copy of the data per worker and OOMs). The models are small; fitting is
-    # ~a minute, and the trained model is then cached to the persistent disk.
     return {
         "rf": RandomForestClassifier(
-            n_estimators=300, max_depth=7, min_samples_leaf=15,
-            max_features="sqrt", random_state=42, n_jobs=1),
-        "et": ExtraTreesClassifier(
-            n_estimators=400, max_depth=12, min_samples_leaf=8,
+            n_estimators=200, max_depth=7, min_samples_leaf=15,
             max_features="sqrt", random_state=42, n_jobs=1),
     }
 
@@ -157,7 +154,7 @@ class NHLPredictor:
         print(f"  Training on {len(X):,} games, {len(cols)} features...")
         for name, model in _build_models().items():
             print(f"    {name}...")
-            cal = CalibratedClassifierCV(model, cv=3, method="sigmoid")
+            cal = CalibratedClassifierCV(model, cv=CALIBRATION_CV, method="sigmoid")
             cal.fit(X, y)
             self.models[name] = cal
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,

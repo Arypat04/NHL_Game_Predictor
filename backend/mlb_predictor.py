@@ -20,7 +20,7 @@ import joblib
 import pandas as pd
 import requests
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 import mlb_matchup as M
 from mlb_pitchers import sp_feature_cols
@@ -35,20 +35,18 @@ TRAIN_CSV    = os.path.join(BASE_DIR, "../data/mlb_matches_train.csv")
 SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/mlb_matches_current.csv")
 MLB_API      = "https://statsapi.mlb.com/api/v1"
 
-# Exhaustive search (model_search.py): bagged trees beat boosting here too — the
-# old xgb-heavy ensemble was suboptimal. Blend the two winning families.
-ENSEMBLE_WEIGHTS = {"rf": 0.5, "et": 0.5}
+# Exhaustive search (model_search.py): bagged trees beat boosting here too, and
+# RandomForest was the single best family (0.560). As with NHL we deploy one lean
+# RF rather than an RF+ExtraTrees blend — the blend was inside the noise band but
+# cost ~8x the training, which the ~512 MB web dyno can't afford.
+ENSEMBLE_WEIGHTS = {"rf": 1.0}
+CALIBRATION_CV = 2
 
 
 def _build_models() -> dict:
-    # n_jobs=1: single-threaded to stay within Render's ~512 MB free tier
-    # (n_jobs=-1 forks a data copy per worker and OOMs). Models are small.
     return {
         "rf": RandomForestClassifier(
-            n_estimators=300, max_depth=7, min_samples_leaf=8,
-            max_features="sqrt", random_state=42, n_jobs=1),
-        "et": ExtraTreesClassifier(
-            n_estimators=400, max_depth=12, min_samples_leaf=8,
+            n_estimators=200, max_depth=7, min_samples_leaf=8,
             max_features="sqrt", random_state=42, n_jobs=1),
     }
 
@@ -181,7 +179,7 @@ class MLBPredictor:
         print(f"  Training on {len(X):,} games, {len(cols)} features...")
         for name, model in _build_models().items():
             print(f"    {name}...")
-            cal = CalibratedClassifierCV(model, cv=3, method="sigmoid")
+            cal = CalibratedClassifierCV(model, cv=CALIBRATION_CV, method="sigmoid")
             cal.fit(X, y)
             self.models[name] = cal
         joblib.dump({"models": self.models, "feature_cols": self._feature_cols,
