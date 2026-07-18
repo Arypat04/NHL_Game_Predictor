@@ -49,8 +49,16 @@ class BaseDatabase:
                 print("⚠ MONGODB_URI not set")
                 return None
             try:
+                # Generous timeouts: the web dyno is CPU/network throttled and
+                # some reads are big (mlb_sp_starts is ~27k docs). The old 10s
+                # socket timeout made that read raise on Render, which silently
+                # fell back to re-collecting pitcher data from the API — that
+                # blocked startup for ~20 minutes and 503'd every MLB endpoint.
                 self._client = MongoClient(
-                    uri, serverSelectionTimeoutMS=5000, socketTimeoutMS=10000
+                    uri,
+                    serverSelectionTimeoutMS=30000,
+                    connectTimeoutMS=30000,
+                    socketTimeoutMS=120000,
                 )
                 self._client.server_info()
                 self._db = self._client[self.db_name]

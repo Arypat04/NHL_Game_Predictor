@@ -151,21 +151,31 @@ def _warmup(app: FastAPI) -> None:
     """Load predictors + season stats. Runs in a background thread so the web
     server can bind its port immediately — loading the models (and, on a cold
     cache, collecting MLB starting-pitcher data) can take minutes, which would
-    otherwise blow past Render's startup port-scan timeout."""
-    try:
-        print("Loading NHL predictor...")
-        app.state.nhl_predictor = NHLPredictor()
-        print("Loading MLB predictor...")
-        app.state.mlb_predictor = MLBPredictor()
+    otherwise blow past Render's startup port-scan timeout.
 
-        nhl_stats = calculate_season_accuracy("nhl")
-        mlb_stats = calculate_season_accuracy("mlb")
-        app.state.nhl_accuracy = nhl_stats["accuracy"]; app.state.nhl_total = nhl_stats["total"]
-        app.state.mlb_accuracy = mlb_stats["accuracy"]; app.state.mlb_total = mlb_stats["total"]
-        print(f"✓ NHL: {nhl_stats['accuracy']:.1%} over {nhl_stats['total']} games")
-        print(f"✓ MLB: {mlb_stats['accuracy']:.1%} over {mlb_stats['total']} games\n")
-    except Exception as e:
-        print(f"⚠ Warmup failed: {e}")
+    Each stage is isolated: a sport that loads slowly or fails must not stop the
+    others from coming up. (A single shared try-block previously meant one slow
+    MLB load left season accuracy permanently at 0.0%.)"""
+    # Season stats read straight from MongoDB and don't need the predictors, so
+    # do them first — the cards populate even if a model is still loading.
+    for sport in ("nhl", "mlb"):
+        try:
+            stats = calculate_season_accuracy(sport)
+            setattr(app.state, f"{sport}_accuracy", stats["accuracy"])
+            setattr(app.state, f"{sport}_total", stats["total"])
+            print(f"✓ {sport.upper()} accuracy: {stats['accuracy']:.1%} over {stats['total']} games")
+        except Exception as e:
+            print(f"⚠ {sport.upper()} season accuracy failed: {e}")
+
+    for sport, label, cls in (("nhl", "NHL", NHLPredictor), ("mlb", "MLB", MLBPredictor)):
+        try:
+            print(f"Loading {label} predictor...")
+            setattr(app.state, f"{sport}_predictor", cls())
+            print(f"✓ {label} predictor ready")
+        except Exception as e:
+            print(f"⚠ {label} predictor failed to load: {e}")
+
+    print("✓ Warmup complete\n")
 
 
 @asynccontextmanager

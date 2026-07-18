@@ -100,8 +100,16 @@ def _load_sp_form(seasons: list[int]) -> pd.DataFrame:
                 if frames:
                     print(f"  Loaded pitcher form from MongoDB ({len(raw):,} starts)")
                     return pd.concat(frames, ignore_index=True)
+            print("  ⚠ mlb_sp_starts is empty — run weekly_refresh.py to populate it")
         except Exception as e:
-            print(f"  ⚠ Mongo pitcher-form load failed: {e} — using local cache")
+            print(f"  ⚠ Mongo pitcher-form load failed: {e}")
+        # When MONGODB_URI is set, Mongo is the source of truth. Falling through
+        # to API collection here would fire thousands of requests and block
+        # startup for ~20 minutes (this is what hung the Render dyno and 503'd
+        # MLB). Degrade instead: SP features fall back to medians, app stays up.
+        print("  → continuing without pitcher form (SP features use medians)")
+        return pd.DataFrame()
+    # No MongoDB configured (local/offline dev) — cached CSV or live collection.
     frames = []
     for y in seasons:
         try:
