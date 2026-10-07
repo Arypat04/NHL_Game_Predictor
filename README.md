@@ -112,9 +112,6 @@ spin-down. Two consequences shaped the design:
    RF+ExtraTrees blend OOM'd the 512 MB dyno (`n_jobs=-1` forks a copy of the data
    per worker), and the accuracy difference is inside the noise band.
 
-Warmup runs in a background thread so the port binds immediately; endpoints return
-`503` until their sport is ready.
-
 ## Roadmap
 
 - [x] NHL moneyline
