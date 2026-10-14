@@ -1,4 +1,4 @@
-import "./SportTabs.css"
+import { useRovingTablist } from "./roving"
 
 const SPORTS = [
   { key: "nhl", label: "NHL" },
@@ -6,15 +6,22 @@ const SPORTS = [
 ]
 
 export default function SportTabs({ selectedSport, onSportSelect }) {
+  const { refs, onKeyDown } = useRovingTablist()
   return (
-    <div className="sport-tabs">
-      {SPORTS.map((sport) => (
+    <div className="seg" role="tablist" aria-label="Sport">
+      {SPORTS.map((s, i) => (
         <button
-          key={sport.key}
-          className={`sport-tab ${selectedSport === sport.key ? "sport-tab--active" : ""}`}
-          onClick={() => onSportSelect(sport.key)}
+          key={s.key}
+          ref={(el) => (refs.current[i] = el)}
+          role="tab"
+          aria-selected={selectedSport === s.key}
+          aria-controls="linelab-panel"
+          tabIndex={selectedSport === s.key ? 0 : -1}
+          className={`seg-btn ${selectedSport === s.key ? "is-active" : ""}`}
+          onClick={() => onSportSelect(s.key)}
+          onKeyDown={(e) => onKeyDown(e, i, SPORTS.length)}
         >
-          {sport.label}
+          {s.label}
         </button>
       ))}
     </div>

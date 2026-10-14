@@ -31,3 +31,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Impeccable design tooling (vendored skill ~21MB; local review artifacts).
+# DESIGN.md and PRODUCT.md are the committed outputs; the rest regenerates.
+.claude/
+.impeccable/
+.github/agents/
+.github/hooks/
+.github/skills/

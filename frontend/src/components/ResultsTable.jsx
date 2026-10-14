@@ -1,92 +1,59 @@
-import './Tables.css'
-import TableSkeleton from "./TableSkeleton"
-
+import { IconHit, IconMiss } from "./Icons"
+import { byTime, splitTime } from "./format"
+import { ReadingSkeleton, surfaceStateFor } from "./States"
 
 function ResultsTable({ results, loading, error }) {
+  if (loading) return <ReadingSkeleton />
+  const state = surfaceStateFor(error, {
+    empty: !results || results.length === 0,
+    emptyProps: { title: "No results yet", msg: "No completed games to grade for this date." },
+  })
+  if (state) return state
 
-  if (loading) {
-    return (
-      <div className="predictions-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Away</th>
-              <th>Home</th>
-              <th>Predicted Winner</th>
-              <th>Home %</th>
-              <th>Away %</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            <TableSkeleton rows={5} cols={7} />
-          </tbody>
-        </table>
-      </div>
-    )
-  }
-  if (error) {
-    return <p>Error: {error}</p>
-  }
-
-  if (!results || results.length === 0) {
-     return <div className="results-table"><p className="empty-state">No games scheduled for this date.</p></div>
-  }
-
-
-  const sortedResults = [...results].sort((a, b) => {
-  const parseTime = (timeStr) => {
-    const [time, modifier] = timeStr.split(' ')
-    let [hours, minutes] = time.split(':').map(Number)
-
-    if (modifier === 'PM' && hours !== 12) hours += 12
-    if (modifier === 'AM' && hours === 12) hours = 0
-
-    return hours * 60 + minutes
-  }
-
-  return parseTime(a.Time) - parseTime(b.Time)
-})
-
+  const rows = [...results].sort(byTime)
 
   return (
-    <div className="results-table">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Status</th>
-            <th>Away</th>
-            <th>Home</th>
-            <th>Result</th>
-            <th>Predicted Winner</th>
-            <th>Correct?</th>
-            <th>Score</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortedResults.map((game, index) => (
-            <tr key={index}>
-              <td>{game.Time}</td>
-              <td style={{ color: game.Status === "Live" ? "var(--positive)" : "var(--text-secondary)" }}>
-                {game.Status === "Live" ? "🔴 Live" : game.Status}</td>
-              <td className={game.Actual_Winner === game.Away ? "winner" : ""}>
-                {game.Away}
-              </td>
-              <td className={game.Actual_Winner === game.Home ? "winner" : ""}>
-                {game.Home}
-              </td>
-              <td>{game.Actual_Winner}</td>
-              <td>{game.Predicted_Winner}</td>
-              <td className={game.Correct ? "correct" : "incorrect"}>
-                {game.Correct ? "✓" : "✗"}
-              </td>
-              <td>{game.Away_Score} - {game.Home_Score}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="readings">
+      {rows.map((g, i) => {
+        const { t, ap } = splitTime(g.Time)
+        const live = g.Status === "Live"
+        const homeWon = g.Actual_Winner === g.Home
+        return (
+          <div className="reading" key={i}>
+            <div className="r-time">
+              {t}<span className="r-ampm"> {ap}</span>
+              <div className={`r-status ${live ? "live" : ""}`}>
+                {live && <span className="dot dot-live" />}
+                {g.Status}
+              </div>
+            </div>
+
+            <div className="r-match">
+              <div className={`r-team ${!homeWon ? "is-pick" : ""}`}>
+                <span className="r-code mono">{g.Away}</span>
+              </div>
+              <div className={`r-team ${homeWon ? "is-pick" : ""}`}>
+                <span className="r-at">@</span>
+                <span className="r-code mono">{g.Home}</span>
+              </div>
+            </div>
+
+            <div className="r-scale" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="r-score mono">
+                {g.Away_Score}<span className="r-sep">–</span>{g.Home_Score}
+              </div>
+              <div className="r-sub">pick&nbsp;<span className="mono" style={{ color: "var(--ink-dim)" }}>{g.Predicted_Winner}</span></div>
+            </div>
+
+            <div className="r-read">
+              <div className={`r-verdict ${g.Correct ? "hit" : "miss"}`}>
+                <span className="chip">{g.Correct ? <IconHit size={14} /> : <IconMiss size={13} />}</span>
+                {g.Correct ? "HIT" : "MISS"}
+              </div>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

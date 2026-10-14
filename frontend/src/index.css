@@ -1,80 +1,158 @@
+/* ============================================================================
+   Line Lab — instrument readout design system
+   World: a precision laboratory instrument. Graph-paper armature, technical
+   grotesque + tabular mono, colorblind-safe cyan/amber signal hues. The world
+   lends type, palette, density and one signature move (the edge deviation scale)
+   — never skeuomorphic bezels. Controls stay standard web controls.
+   ============================================================================ */
+
+/* ── Self-hosted faces (no hosted stylesheet) ───────────────────────────── */
+@font-face { font-family:'Archivo'; font-style:normal; font-weight:500; font-display:swap; src:url('./assets/fonts/Archivo-500.woff2') format('woff2'); }
+@font-face { font-family:'Archivo'; font-style:normal; font-weight:600; font-display:swap; src:url('./assets/fonts/Archivo-600.woff2') format('woff2'); }
+@font-face { font-family:'Archivo'; font-style:normal; font-weight:700; font-display:swap; src:url('./assets/fonts/Archivo-700.woff2') format('woff2'); }
+@font-face { font-family:'Archivo'; font-style:normal; font-weight:800; font-display:swap; src:url('./assets/fonts/Archivo-800.woff2') format('woff2'); }
+@font-face { font-family:'Spline Sans Mono'; font-style:normal; font-weight:400; font-display:swap; src:url('./assets/fonts/SplineSansMono-400.woff2') format('woff2'); }
+@font-face { font-family:'Spline Sans Mono'; font-style:normal; font-weight:500; font-display:swap; src:url('./assets/fonts/SplineSansMono-500.woff2') format('woff2'); }
+@font-face { font-family:'Spline Sans Mono'; font-style:normal; font-weight:600; font-display:swap; src:url('./assets/fonts/SplineSansMono-600.woff2') format('woff2'); }
+@font-face { font-family:'Spline Sans Mono'; font-style:normal; font-weight:700; font-display:swap; src:url('./assets/fonts/SplineSansMono-700.woff2') format('woff2'); }
+
+/* ── Tokens: dark instrument panel (default — the night-of-games scene) ──── */
 :root {
-  --bg-primary: #0f1117;
-  --bg-secondary: #1a1d27;
-  --bg-tertiary: #242736;
-  --accent: #3b82f6;
-  --positive: #22c55e;
-  --negative: #ef4444;
-  --warning: #f59e0b;
-  --text-primary: #ffffff;
-  --text-secondary: #94a3b8;
-  --border: #2d3148;
-  --border-radius: 8px;
-  --font: 'Inter', system-ui, sans-serif;
+  --font-ui:   'Archivo', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Spline Sans Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ground + structural armature */
+  --ground:      #0a0e16;
+  --ground-2:    #0c1119;
+  --panel:       #111825;
+  --panel-hi:    #16202f;
+  --grid-minor:  rgba(99, 179, 196, 0.045);
+  --grid-major:  rgba(99, 179, 196, 0.075);
+
+  /* rules / strokes */
+  --rule:        rgba(150, 176, 204, 0.14);
+  --rule-strong: rgba(150, 176, 204, 0.26);
+
+  /* ink (secondary tinted from the cool hue, never flat gray) */
+  --ink:       #e9eef6;
+  --ink-dim:   #9fb0c6;   /* ≥4.5:1 on panel + ground */
+  --ink-faint: #8090a8;   /* small mono labels — ≥4.5:1 on panel (5.48) */
+
+  /* signal hues — colorblind-safe cyan (for) vs amber (against) */
+  --signal:        #37d2c6;   /* deviation in your favor / live / brand */
+  --signal-ink:    #0a2b28;   /* text on a signal fill */
+  --signal-dim:    rgba(55, 210, 198, 0.16);
+  --counter:       #f2a73c;   /* deviation against / caution */
+  --counter-ink:   #2e1c02;
+  --counter-dim:   rgba(242, 167, 60, 0.16);
+  --market:        #7f8ca3;   /* the market reference tick (neutral) */
+
+  /* states */
+  --warn:   #f2a73c;
+  --crit:   #ef5f5f;          /* reserved for true errors only */
+  --crit-dim: rgba(239, 95, 95, 0.14);
+
+  /* geometry — precise instrument, small radii */
+  --r-sm: 3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+  --shadow: 0 2px 10px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-pop: 0 10px 30px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.4);
+
+  --maxw: 1160px;
+  color-scheme: dark;
 }
 
-[data-theme="light"] {
-  --bg-primary: #f8fafc;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f1f5f9;
-  --text-primary: #0f172a;
-  --text-secondary: #64748b;
-  --border: #e2e8f0;
+/* ── Light instrument: graph-paper lab bench ────────────────────────────── */
+:root[data-theme="light"] {
+  --ground:      #eceff4;
+  --ground-2:    #e6eaf1;
+  --panel:       #ffffff;
+  --panel-hi:    #f5f8fc;
+  --grid-minor:  rgba(37, 99, 120, 0.05);
+  --grid-major:  rgba(37, 99, 120, 0.09);
+
+  --rule:        rgba(30, 58, 92, 0.14);
+  --rule-strong: rgba(30, 58, 92, 0.24);
+
+  --ink:       #0e1622;
+  --ink-dim:   #47566b;
+  --ink-faint: #59687e;   /* ≥4.5:1 on ground (4.92) + panel */
+
+  --signal:        #097168;   /* ≥4.5:1 on white (5.88) + ground (5.10); white-on it 5.88 */
+  --signal-ink:    #ffffff;
+  --signal-dim:    rgba(9, 113, 104, 0.14);
+  --counter:       #925607;   /* ≥4.5:1 on white (5.90), ground (5.12), and over counter-dim */
+  --counter-ink:   #ffffff;
+  --counter-dim:   rgba(146, 86, 7, 0.14);
+  --market:        #64748b;
+
+  --warn:   #b9700a;
+  --crit:   #c0392b;
+  --crit-dim: rgba(192, 57, 43, 0.12);
+
+  --shadow: 0 2px 10px rgba(20,40,70,0.08), 0 1px 2px rgba(20,40,70,0.06);
+  --shadow-pop: 0 12px 34px rgba(20,40,70,0.14), 0 2px 6px rgba(20,40,70,0.08);
+  color-scheme: light;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
 
 body {
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: var(--font);
+  min-height: 100vh;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
-  min-height: 100vh;
+  color: var(--ink);
+  background-color: var(--ground);
+  /* graph-paper armature: minor 24px grid + major 120px grid, both axes */
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  background-position: -1px -1px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05" 1;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
+/* mono carries tabular, lined figures everywhere it appears */
+.mono, code, kbd {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "zero" 1, "ss01" 1;
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
-th {
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+h1, h2, h3 { font-weight: 700; color: var(--ink); line-height: 1.15; }
+
+button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
+a { color: var(--signal); text-decoration: none; }
+
+/* ── Browser surfaces: themed, not default (the cheapest "built" signal) ── */
+::selection { background: var(--signal); color: var(--signal-ink); }
+:root { caret-color: var(--signal); accent-color: var(--signal); }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
-td {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
+* { scrollbar-width: thin; scrollbar-color: var(--rule-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 20px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); background-clip: content-box; }
 
-tr:last-child td {
-  border-bottom: none;
-}
-
-tr:hover td {
-  background-color: var(--bg-tertiary);
-}
-
-button {
-  cursor: pointer;
-  border: none;
-  background: none;
-  font-family: var(--font);
-}
-
-h1, h2, h3 {
-  font-weight: 600;
-  color: var(--text-primary);
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
