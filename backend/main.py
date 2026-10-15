@@ -163,12 +163,6 @@ def _warmup(app: FastAPI) -> None:
             print(f"✓ {sport.upper()} accuracy: {stats['accuracy']:.1%} over {stats['total']} games")
         except Exception as e:
             print(f"⚠ {sport.upper()} season accuracy failed: {e}")
-        # data freshness — when the weekly refresh last updated this sport
-        try:
-            setattr(app.state, f"{sport}_updated",
-                    import_module(f"{sport}_database").get_refresh_time())
-        except Exception:
-            setattr(app.state, f"{sport}_updated", None)
 
     for sport, label, cls in (("nhl", "NHL", NHLPredictor), ("mlb", "MLB", MLBPredictor)):
         try:
@@ -188,7 +182,6 @@ async def lifespan(app: FastAPI):
     app.state.mlb_predictor = None
     app.state.nhl_accuracy = 0.0; app.state.nhl_total = 0
     app.state.mlb_accuracy = 0.0; app.state.mlb_total = 0
-    app.state.nhl_updated = None; app.state.mlb_updated = None
 
     threading.Thread(target=_warmup, args=(app,), daemon=True).start()
     yield
@@ -266,7 +259,12 @@ def get_status(request: Request, sport: str = "nhl"):
 
     accuracy = request.app.state.nhl_accuracy if sport == "nhl" else request.app.state.mlb_accuracy
     total    = request.app.state.nhl_total    if sport == "nhl" else request.app.state.mlb_total
-    updated  = getattr(request.app.state, f"{sport}_updated", None)
+    # read fresh (tiny single-doc lookup on the cached connection) so a weekly
+    # refresh shows up without waiting for the next cold start
+    try:
+        updated = import_module(f"{sport}_database").get_refresh_time()
+    except Exception:
+        updated = None
 
     return {
         "status":              "ok",
