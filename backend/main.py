@@ -514,14 +514,23 @@ def get_edges(request: Request, date: str, sport: str = "nhl"):
         home_implied = american_to_implied(best_home_odds)
         away_implied = american_to_implied(best_away_odds)
 
+        # Remove the bookmaker margin (vig): raw implied probabilities sum to
+        # >1 (the house's overround), so an edge measured against raw implied is
+        # systematically understated. Normalize the two sides to a fair
+        # probability that sums to 1, and measure the edge against THAT — it's
+        # the market's true estimate with the margin stripped out.
+        overround = home_implied + away_implied
+        home_fair = home_implied / overround if overround else home_implied
+        away_fair = away_implied / overround if overround else away_implied
+
         pred = pred_lookup.get("_".join(sorted([home, away])))
         if pred is None:
             continue
 
         home_model = pred["Home_Win_Prob"]
         away_model = pred["Away_Win_Prob"]
-        home_edge  = home_model - home_implied
-        away_edge  = away_model - away_implied
+        home_edge  = home_model - home_fair
+        away_edge  = away_model - away_fair
 
         edges.append({
             "Time":              pred["Time"],
@@ -531,8 +540,10 @@ def get_edges(request: Request, date: str, sport: str = "nhl"):
             "Away_Win_Prob":     round(away_model, 4),
             "Home_Odds":         best_home_odds,
             "Away_Odds":         best_away_odds,
-            "Home_Implied_Prob": round(home_implied, 4),
+            "Home_Implied_Prob": round(home_implied, 4),   # raw (with vig)
             "Away_Implied_Prob": round(away_implied, 4),
+            "Home_Fair_Prob":    round(home_fair, 4),      # no-vig, edge basis
+            "Away_Fair_Prob":    round(away_fair, 4),
             "Home_Edge":         round(home_edge, 4),
             "Away_Edge":         round(away_edge, 4),
             "Best_Edge":         round(max(home_edge, away_edge), 4),

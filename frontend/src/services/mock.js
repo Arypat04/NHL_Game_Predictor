@@ -12,14 +12,16 @@ const predictions = [
   { Time: "10:30 PM", Away: "SEA", Home: "LAK", Predicted_Winner: "LAK", Home_Win_Prob: 0.702, Away_Win_Prob: 0.298, Confidence: 0.702 },
 ]
 
-// Edges are model prob − implied-from-odds, kept internally consistent so the
-// "model % − market %" equation on each row resolves exactly to the edge shown.
+// Edges are model prob − no-vig implied (the backend de-vigs the two best prices
+// before comparing to the model). A clean consequence: home edge = −away edge,
+// since model and fair probabilities each sum to 1. The "model % − market %"
+// equation on each row resolves exactly to the edge shown.
 const edges = [
-  { Time: "7:00 PM", Away: "TOR", Home: "BOS", Best_Bet: "Home", Away_Odds: 145, Home_Odds: -170, Away_Edge: -0.039, Home_Edge: 0.001, Bookmaker: "DraftKings" },
-  { Time: "7:30 PM", Away: "NYR", Home: "PIT", Best_Bet: "Away", Away_Odds: 120, Home_Odds: -140, Away_Edge: 0.124, Home_Edge: -0.162, Bookmaker: "FanDuel" },
-  { Time: "9:00 PM", Away: "EDM", Home: "CGY", Best_Bet: "Away", Away_Odds: -125, Home_Odds: 105, Away_Edge: 0.114, Home_Edge: -0.158, Bookmaker: "BetMGM" },
+  { Time: "7:00 PM", Away: "TOR", Home: "BOS", Best_Bet: "Home", Away_Odds: 145, Home_Odds: -170, Away_Edge: -0.024, Home_Edge: 0.024, Bookmaker: "DraftKings" },
+  { Time: "7:30 PM", Away: "NYR", Home: "PIT", Best_Bet: "Away", Away_Odds: 120, Home_Odds: -140, Away_Edge: 0.141, Home_Edge: -0.141, Bookmaker: "FanDuel" },
+  { Time: "9:00 PM", Away: "EDM", Home: "CGY", Best_Bet: "Away", Away_Odds: -125, Home_Odds: 105, Away_Edge: 0.138, Home_Edge: -0.138, Bookmaker: "BetMGM" },
   // a SPLIT: model's pick is LAK (home) to win, but the value is on SEA (away)
-  { Time: "10:30 PM", Away: "SEA", Home: "LAK", Best_Bet: "Away", Away_Odds: 290, Home_Odds: -300, Away_Edge: 0.042, Home_Edge: -0.048, Bookmaker: "Caesars" },
+  { Time: "10:30 PM", Away: "SEA", Home: "LAK", Best_Bet: "Away", Away_Odds: 290, Home_Odds: -300, Away_Edge: 0.043, Home_Edge: -0.043, Bookmaker: "Caesars" },
 ]
 
 const results = [

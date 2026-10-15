@@ -19,7 +19,7 @@ export default function Legend() {
         <span className="legend-k legend-k--inline">How to read</span>
         <span className="legend-item">
           <span className="lg-ring" aria-hidden="true" />
-          <span>Market implied</span>
+          <span>Market implied <span className="legend-mute">(no-vig)</span></span>
         </span>
         <span className="legend-item">
           <span className="lg-pointer" aria-hidden="true" />

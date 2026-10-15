@@ -1,6 +1,6 @@
 import ProbScale from "./ProbScale"
 import { IconUp, IconDown, IconWarn, IconFilter } from "./Icons"
-import { byTime, splitTime, fmtPct, fmtOdds, fmtEdge, americanToImplied } from "./format"
+import { byTime, splitTime, fmtPct, fmtOdds, fmtEdge } from "./format"
 import { ReadingSkeleton, surfaceStateFor } from "./States"
 
 const betEdgeOf = (g) =>
@@ -52,7 +52,9 @@ function BoardTable({ board, loading, error, rawCount = 0, threshold, onClear, m
           const pickHome = g.Predicted_Winner === g.Home
           const pickCode = pickHome ? g.Home : g.Away
           const e = g.edge
-          const marketHome = e ? americanToImplied(e.Home_Odds) : null
+          // Market prob on the same no-vig basis the backend used for the edge
+          // (model − edge), so the scale ring and the equation always agree.
+          const marketHome = e ? g.Home_Win_Prob - e.Home_Edge : null
           const hasOdds = marketHome != null
           const betHome = e ? e.Best_Bet === "Home" : pickHome
           const betCode = betHome ? g.Home : g.Away
