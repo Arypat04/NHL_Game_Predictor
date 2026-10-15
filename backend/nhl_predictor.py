@@ -112,7 +112,7 @@ class NHLPredictor:
 
     def _load(self) -> None:
         team = _load_team_data()
-        self._results = elo.results_frame(team, score_cols=("GF", "GA"))
+        self._results = elo.results_frame(team, score_cols=("GF", "GA"), with_rest=True)
         print(f"✓ Elo ready - {len(self._results):,} completed games "
               f"(seasons {self._results['Season'].min()}-{self._results['Season'].max()}).\n")
         self._load_schedule()
@@ -123,6 +123,17 @@ class NHLPredictor:
         opp_col = "Opponent" if "Opponent" in schedule.columns else "Opp"
         schedule["Opp_abbrev"] = schedule[opp_col].map(TEAM_NAME_TO_ABBREV)
         self._schedule = schedule
+        # each team's game dates (home + away rows), for the rest adjustment
+        self._team_dates = {t: pd.DatetimeIndex(sorted(g["Date"].unique()))
+                            for t, g in schedule.groupby("Team")}
+
+    def _rest(self, team: str, target: pd.Timestamp) -> int | None:
+        """Days since the team's previous game before `target`, or None."""
+        dates = self._team_dates.get(team)
+        if dates is None:
+            return None
+        prior = dates[dates < target]
+        return (target - prior[-1]).days if len(prior) else None
 
     # -- prediction ---------------------------------------------------------
 
@@ -151,7 +162,7 @@ class NHLPredictor:
             away = g.get("Opp_abbrev") or TEAM_NAME_TO_ABBREV.get(g.get("Opp", ""))
             if not away:
                 continue
-            p = model.prob_home(home, away)
+            p = model.prob_home(home, away, self._rest(home, target), self._rest(away, target))
             rows.append({
                 "Time":             g.get("Time", ""),
                 "Away":             away,
