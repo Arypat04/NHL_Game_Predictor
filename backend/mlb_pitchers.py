@@ -1,6 +1,12 @@
 """
 MLB starting-pitcher data collector.
 
+NOTE: not currently wired into the model. The MLB predictor was moved to a clean
+team-only Elo; this collector is kept, ready, for the planned next step — adding
+a starting-pitcher Elo *adjustment* (an out-of-sample test suggested Elo + SP
+would beat the old feature model). The weekly refresh stops collecting SP starts
+until that lands; re-enable it in weekly_refresh.py when it does.
+
 Baseball outcomes are driven heavily by the starting pitcher, which the
 team-level rolling stats can't capture. This module pulls per-pitcher game logs
 from the MLB Stats API and builds leakage-safe rolling "form" stats over each

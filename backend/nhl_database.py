@@ -97,6 +97,4 @@ log_predictions   = db.log_predictions
 log_results       = db.log_results
 log_edges         = db.log_edges
 get_season_stats  = db.get_season_stats
-save_model        = db.save_model
-load_model        = db.load_model
 _clean_doc        = db._clean_doc
