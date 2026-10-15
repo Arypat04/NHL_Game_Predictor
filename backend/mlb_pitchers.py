@@ -1,11 +1,13 @@
 """
 MLB starting-pitcher data collector.
 
-NOTE: not currently wired into the model. The MLB predictor was moved to a clean
-team-only Elo; this collector is kept, ready, for the planned next step — adding
-a starting-pitcher Elo *adjustment* (an out-of-sample test suggested Elo + SP
-would beat the old feature model). The weekly refresh stops collecting SP starts
-until that lands; re-enable it in weekly_refresh.py when it does.
+NOTE: not currently wired into the model. A starting-pitcher Elo *adjustment* was
+tested (league- and team-relative, several skill metrics, tuned scale) and did
+NOT improve the moneyline model — once team strength is known, which starter goes
+tonight is mostly noise for who WINS. Kept because the starter clearly matters for
+run-based markets (totals / run line / pitcher props), so this is the right tool
+for that future work, not for moneyline. The weekly refresh no longer collects SP
+starts; re-enable it in weekly_refresh.py if that work begins.
 
 Baseball outcomes are driven heavily by the starting pitcher, which the
 team-level rolling stats can't capture. This module pulls per-pitcher game logs

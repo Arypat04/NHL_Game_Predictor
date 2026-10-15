@@ -20,12 +20,13 @@ TRAIN_CSV = {
     "nhl": "../data/nhl_matches_train.csv",
     "mlb": "../data/mlb_matches_train.csv",
 }
+SCORE_COLS = {"nhl": ("GF", "GA"), "mlb": ("R", "RA")}
 
 
 def evaluate(sport: str, n_test: int = 3) -> None:
     team = pd.read_csv(TRAIN_CSV[sport])
     team["Season"] = team["Season"].apply(elo.normalize_season)
-    rf = elo.results_frame(team)
+    rf = elo.results_frame(team, score_cols=SCORE_COLS[sport])
 
     preds = elo.Elo.for_sport(sport).predictions(rf)
     test_seasons = sorted(preds["Season"].unique())[-n_test:]

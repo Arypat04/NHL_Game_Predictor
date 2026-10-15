@@ -23,16 +23,21 @@ team-game logs the predictors already load.
 """
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 BASE_RATING = 1500.0
 
 # Chosen by out-of-sample validation (tune on one season, confirm on the next).
 # k = update speed, hfa = home advantage in Elo points, regress = fraction of a
-# team's rating carried past the between-season pull toward the mean.
+# team's rating carried past the between-season pull toward the mean. mov_c/mov_d
+# shape the margin-of-victory multiplier (see _run): a blowout moves ratings more
+# than a squeaker, with mov_d damping a favorite's blowouts so they don't run
+# away (mov_d=0 means pure margin, which validated best for NHL).
 PARAMS = {
-    "nhl": {"k": 6.0, "hfa": 35.0, "regress": 0.70},
-    "mlb": {"k": 4.0, "hfa": 24.0, "regress": 0.70},
+    "nhl": {"k": 8.0, "hfa": 35.0, "regress": 0.70, "mov_c": 1.0, "mov_d": 0.0},
+    "mlb": {"k": 4.0, "hfa": 24.0, "regress": 0.70, "mov_c": 1.0, "mov_d": 0.001},
 }
 
 
@@ -45,10 +50,14 @@ def normalize_season(s) -> int:
 
 
 class Elo:
-    def __init__(self, k: float, hfa: float, regress: float, base: float = BASE_RATING):
+    def __init__(self, k: float, hfa: float, regress: float,
+                 mov_c: float | None = None, mov_d: float | None = None,
+                 base: float = BASE_RATING):
         self.k = k
         self.hfa = hfa
         self.regress = regress
+        self.mov_c = mov_c          # None → margin-of-victory multiplier off
+        self.mov_d = mov_d
         self.base = base
         self.rating: dict[str, float] = {}
 
@@ -66,8 +75,11 @@ class Elo:
         self.rating = {}
         cur_season = None
         out: list[float] = []
-        for home, away, y, season in zip(
-            games["home"], games["away"], games["home_win"], games["Season"], strict=False
+        use_mov = self.mov_c is not None and "margin" in games.columns
+        margins = games["margin"] if use_mov else [None] * len(games)
+        for home, away, y, season, margin in zip(
+            games["home"], games["away"], games["home_win"], games["Season"], margins,
+            strict=False,
         ):
             if season != cur_season:                       # season rollover
                 cur_season = season
@@ -78,8 +90,15 @@ class Elo:
             p = self._p_home(rh, ra)
             if record:
                 out.append(p)
-            self.rating[home] = rh + self.k * (y - p)
-            self.rating[away] = ra + self.k * ((1 - y) - (1 - p))
+            # margin-of-victory multiplier: bigger wins move ratings more, damped
+            # for a favored winner so top teams don't run away. Falls back to the
+            # plain update when a margin is missing.
+            k = self.k
+            if use_mov and margin is not None and not pd.isna(margin):
+                gap = (rh + self.hfa) - ra if y == 1 else ra - (rh + self.hfa)  # winner − loser
+                k *= math.log(abs(margin) + 1) * (self.mov_c / max(self.mov_c + self.mov_d * gap, 0.1))
+            self.rating[home] = rh + k * (y - p)
+            self.rating[away] = ra + k * ((1 - y) - (1 - p))
         return out
 
     def fit(self, games: pd.DataFrame) -> "Elo":
@@ -105,14 +124,25 @@ class Elo:
         return sorted(self.rating.items(), key=lambda kv: kv[1], reverse=True)[:n]
 
 
-def results_frame(team_df: pd.DataFrame) -> pd.DataFrame:
+def results_frame(team_df: pd.DataFrame,
+                  score_cols: tuple[str, str] | None = None) -> pd.DataFrame:
     """Team-game logs → one row per completed game (home perspective).
 
     Takes the home-side rows, so each game appears once; `home_win` is the home
-    team's result. Rows without a win/loss result (unplayed) are dropped."""
+    team's result. Rows without a win/loss result (unplayed) are dropped.
+    `score_cols` = (home_for, home_against) column names (e.g. ("GF","GA") /
+    ("R","RA")); when given and present, a `margin` column is added for the
+    margin-of-victory multiplier. Missing/non-numeric scores leave margin NaN,
+    and the engine falls back to a plain update for those games."""
     df = team_df[team_df["Home_Away"] == "Home"].copy()
     df = df.dropna(subset=["Rslt"])
     df = df.rename(columns={"Team": "home", "Opp": "away"})
     df["home_win"] = (df["Rslt"] == "W").astype(int)
     df["Date"] = pd.to_datetime(df["Date"])
-    return df[["Date", "Season", "home", "away", "home_win"]].sort_values("Date")
+    cols = ["Date", "Season", "home", "away", "home_win"]
+    if score_cols and score_cols[0] in df.columns and score_cols[1] in df.columns:
+        gf = pd.to_numeric(df[score_cols[0]], errors="coerce")
+        ga = pd.to_numeric(df[score_cols[1]], errors="coerce")
+        df["margin"] = gf - ga
+        cols.append("margin")
+    return df[cols].sort_values("Date")

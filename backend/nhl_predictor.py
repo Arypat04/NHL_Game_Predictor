@@ -112,7 +112,7 @@ class NHLPredictor:
 
     def _load(self) -> None:
         team = _load_team_data()
-        self._results = elo.results_frame(team)
+        self._results = elo.results_frame(team, score_cols=("GF", "GA"))
         print(f"✓ Elo ready - {len(self._results):,} completed games "
               f"(seasons {self._results['Season'].min()}-{self._results['Season'].max()}).\n")
         self._load_schedule()
