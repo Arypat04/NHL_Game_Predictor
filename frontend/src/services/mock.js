@@ -37,7 +37,7 @@ const results = [
 const status = {
   season_accuracy: 0.583,
   total_predictions: 1312,
-  model_last_trained: "2026-10-06",
+  data_updated: "2026-10-13T08:00:00Z",
   odds_api_configured: true,
 }
 

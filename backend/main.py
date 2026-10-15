@@ -1,7 +1,6 @@
 import os
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime
 from importlib import import_module
 
 import requests
@@ -9,8 +8,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from nhl_predictor import NHLPredictor, MODEL_PATH as NHL_MODEL_PATH
-from mlb_predictor import MLBPredictor, MODEL_PATH as MLB_MODEL_PATH
+from nhl_predictor import NHLPredictor
+from mlb_predictor import MLBPredictor
 from nhl_teams import TEAM_NAME_TO_ABBREV as NHL_TEAM_NAME_TO_ABBREV
 from mlb_teams import (
     TEAM_NAME_TO_ABBREV as MLB_TEAM_NAME_TO_ABBREV,
@@ -23,13 +22,11 @@ SPORTS = {
     "nhl": {
         "odds_sport":    "icehockey_nhl",
         "team_name_map": NHL_TEAM_NAME_TO_ABBREV,
-        "model_path":    NHL_MODEL_PATH,
         "active":        True,
     },
     "mlb": {
         "odds_sport":    "baseball_mlb",
         "team_name_map": MLB_TEAM_NAME_TO_ABBREV,
-        "model_path":    MLB_MODEL_PATH,
         "active":        True,
     },
 }
@@ -166,6 +163,12 @@ def _warmup(app: FastAPI) -> None:
             print(f"✓ {sport.upper()} accuracy: {stats['accuracy']:.1%} over {stats['total']} games")
         except Exception as e:
             print(f"⚠ {sport.upper()} season accuracy failed: {e}")
+        # data freshness — when the weekly refresh last updated this sport
+        try:
+            setattr(app.state, f"{sport}_updated",
+                    import_module(f"{sport}_database").get_refresh_time())
+        except Exception:
+            setattr(app.state, f"{sport}_updated", None)
 
     for sport, label, cls in (("nhl", "NHL", NHLPredictor), ("mlb", "MLB", MLBPredictor)):
         try:
@@ -185,6 +188,7 @@ async def lifespan(app: FastAPI):
     app.state.mlb_predictor = None
     app.state.nhl_accuracy = 0.0; app.state.nhl_total = 0
     app.state.mlb_accuracy = 0.0; app.state.mlb_total = 0
+    app.state.nhl_updated = None; app.state.mlb_updated = None
 
     threading.Thread(target=_warmup, args=(app,), daemon=True).start()
     yield
@@ -260,16 +264,14 @@ def get_status(request: Request, sport: str = "nhl"):
     if sport not in SPORTS:
         raise HTTPException(status_code=400, detail=f"Unknown sport '{sport}'")
 
-    model_path = SPORTS[sport]["model_path"]
-    accuracy   = request.app.state.nhl_accuracy if sport == "nhl" else request.app.state.mlb_accuracy
-    total      = request.app.state.nhl_total    if sport == "nhl" else request.app.state.mlb_total
+    accuracy = request.app.state.nhl_accuracy if sport == "nhl" else request.app.state.mlb_accuracy
+    total    = request.app.state.nhl_total    if sport == "nhl" else request.app.state.mlb_total
+    updated  = getattr(request.app.state, f"{sport}_updated", None)
 
     return {
         "status":              "ok",
         "sport":               sport,
-        "model_last_trained":  datetime.fromtimestamp(
-            os.path.getmtime(model_path)
-        ).isoformat() if os.path.exists(model_path) else None,
+        "data_updated":        updated,      # last weekly refresh (see weekly_refresh.py)
         "total_predictions":   total,
         "season_accuracy":     accuracy,
         "odds_api_configured": bool(os.getenv("ODDS_API_KEY")),

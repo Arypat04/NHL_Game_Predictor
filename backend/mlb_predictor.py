@@ -31,9 +31,6 @@ from seasons import TRAIN_WINDOW
 warnings.filterwarnings("ignore")
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
-# Vestigial: Elo has no model file. Kept so main.py's /status field and any
-# importers don't break. Nothing reads or writes this path any more.
-MODEL_PATH   = os.path.join(BASE_DIR, "models_mlb.pkl")
 TRAIN_CSV    = os.path.join(BASE_DIR, "../data/mlb_matches_train.csv")
 SCHEDULE_CSV = os.path.join(BASE_DIR, "../data/mlb_matches_current.csv")
 

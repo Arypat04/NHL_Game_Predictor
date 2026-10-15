@@ -97,4 +97,6 @@ log_predictions   = db.log_predictions
 log_results       = db.log_results
 log_edges         = db.log_edges
 get_season_stats  = db.get_season_stats
+set_refresh_time  = db.set_refresh_time
+get_refresh_time  = db.get_refresh_time
 _clean_doc        = db._clean_doc

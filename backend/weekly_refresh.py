@@ -47,6 +47,8 @@ def refresh_nhl() -> None:
         print(f"  games:    {upsert_games(fresh):,} upserted")
 
     S.generate_results(sched)
+    from nhl_database import set_refresh_time
+    set_refresh_time()
 
 
 def refresh_mlb() -> None:
@@ -58,6 +60,8 @@ def refresh_mlb() -> None:
     if not cur.empty:
         print(f"  schedule: {upsert_schedule(cur):,} upserted")
         S.generate_results(cur)
+        from mlb_database import set_refresh_time
+        set_refresh_time()
 
 
 if __name__ == "__main__":

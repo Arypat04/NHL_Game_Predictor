@@ -293,3 +293,30 @@ class BaseDatabase:
         except Exception as e:
             print(f"⚠ Failed to get season stats: {e}")
             return None
+
+    # -- data freshness -----------------------------------------------------
+
+    def set_refresh_time(self) -> None:
+        """Stamp 'now' as the last data refresh — called at the end of the weekly
+        refresh so the UI can show when the data was last updated."""
+        db = self.get_db()
+        if db is None:
+            return
+        try:
+            db["meta"].replace_one(
+                {"_id": "refresh"},
+                {"_id": "refresh", "updated_at": datetime.utcnow()},
+                upsert=True,
+            )
+        except Exception as e:
+            print(f"⚠ Failed to set refresh time: {e}")
+
+    def get_refresh_time(self) -> str | None:
+        db = self.get_db()
+        if db is None:
+            return None
+        try:
+            doc = db["meta"].find_one({"_id": "refresh"})
+            return doc["updated_at"].isoformat() if doc and doc.get("updated_at") else None
+        except Exception:
+            return None
