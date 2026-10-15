@@ -27,7 +27,7 @@ export default function Legend() {
         </span>
         <span className="legend-item">
           <span className="lg-bar" aria-hidden="true" />
-          <span><b>Edge</b> — model % minus market %, in points</span>
+          <span><b>Edge</b> = model&nbsp;% − market&nbsp;% <span className="legend-mute">(in points)</span></span>
         </span>
         <span className="legend-sep" aria-hidden="true" />
         <span className="legend-item"><b>Pick</b> = model's winner</span>

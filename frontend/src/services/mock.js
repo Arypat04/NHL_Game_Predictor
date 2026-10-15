@@ -12,18 +12,22 @@ const predictions = [
   { Time: "10:30 PM", Away: "SEA", Home: "LAK", Predicted_Winner: "LAK", Home_Win_Prob: 0.702, Away_Win_Prob: 0.298, Confidence: 0.702 },
 ]
 
+// Edges are model prob − implied-from-odds, kept internally consistent so the
+// "model % − market %" equation on each row resolves exactly to the edge shown.
 const edges = [
-  { Time: "7:00 PM", Away: "TOR", Home: "BOS", Best_Bet: "Home", Away_Odds: 145, Home_Odds: -170, Away_Edge: -0.021, Home_Edge: 0.058, Bookmaker: "DraftKings" },
-  { Time: "7:30 PM", Away: "NYR", Home: "PIT", Best_Bet: "Away", Away_Odds: 120, Home_Odds: -140, Away_Edge: 0.043, Home_Edge: -0.031, Bookmaker: "FanDuel" },
-  { Time: "9:00 PM", Away: "EDM", Home: "CGY", Best_Bet: "Away", Away_Odds: -125, Home_Odds: 105, Away_Edge: 0.071, Home_Edge: -0.050, Bookmaker: "BetMGM" },
+  { Time: "7:00 PM", Away: "TOR", Home: "BOS", Best_Bet: "Home", Away_Odds: 145, Home_Odds: -170, Away_Edge: -0.039, Home_Edge: 0.001, Bookmaker: "DraftKings" },
+  { Time: "7:30 PM", Away: "NYR", Home: "PIT", Best_Bet: "Away", Away_Odds: 120, Home_Odds: -140, Away_Edge: 0.124, Home_Edge: -0.162, Bookmaker: "FanDuel" },
+  { Time: "9:00 PM", Away: "EDM", Home: "CGY", Best_Bet: "Away", Away_Odds: -125, Home_Odds: 105, Away_Edge: 0.114, Home_Edge: -0.158, Bookmaker: "BetMGM" },
   // a SPLIT: model's pick is LAK (home) to win, but the value is on SEA (away)
-  { Time: "10:30 PM", Away: "SEA", Home: "LAK", Best_Bet: "Away", Away_Odds: 290, Home_Odds: -300, Away_Edge: 0.048, Home_Edge: -0.048, Bookmaker: "Caesars" },
+  { Time: "10:30 PM", Away: "SEA", Home: "LAK", Best_Bet: "Away", Away_Odds: 290, Home_Odds: -300, Away_Edge: 0.042, Home_Edge: -0.048, Bookmaker: "Caesars" },
 ]
 
 const results = [
   { Time: "7:00 PM", Status: "Final", Away: "TOR", Home: "BOS", Actual_Winner: "BOS", Predicted_Winner: "BOS", Correct: true,  Away_Score: 2, Home_Score: 4 },
   { Time: "7:00 PM", Status: "Final", Away: "MTL", Home: "TBL", Actual_Winner: "MTL", Predicted_Winner: "TBL", Correct: false, Away_Score: 3, Home_Score: 1 },
   { Time: "8:00 PM", Status: "Live",  Away: "NYR", Home: "PIT", Actual_Winner: "PIT", Predicted_Winner: "NYR", Correct: false, Away_Score: 1, Home_Score: 2 },
+  { Time: "8:30 PM", Status: "Live",  Away: "FLA", Home: "NYI", Actual_Winner: "FLA", Predicted_Winner: "NYI", Correct: false, Away_Score: 2, Home_Score: 2 },
+  { Time: "9:30 PM", Status: "Live",  Away: "DAL", Home: "WPG", Actual_Winner: "WPG", Predicted_Winner: "WPG", Correct: true,  Away_Score: 1, Home_Score: 3 },
   { Time: "9:00 PM", Status: "Final", Away: "EDM", Home: "CGY", Actual_Winner: "EDM", Predicted_Winner: "EDM", Correct: true,  Away_Score: 5, Home_Score: 2 },
   { Time: "10:00 PM", Status: "Final", Away: "VGK", Home: "COL", Actual_Winner: "COL", Predicted_Winner: "COL", Correct: true,  Away_Score: 1, Home_Score: 3 },
 ]

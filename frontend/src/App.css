@@ -207,6 +207,25 @@
 .r-edgedir.is-for { color: var(--signal); }
 .r-edgedir.is-against { color: var(--counter); }
 
+/* the edge, written out: model % − market % resolves to the number above it */
+.r-eq {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  color: var(--ink-dim); font-variant-numeric: tabular-nums slashed-zero;
+}
+.r-op { display: inline-flex; align-items: baseline; gap: 4px; }
+.r-op-k {
+  font-size: 8.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.r-minus { color: var(--rule-strong); font-weight: 600; }
+/* small "bet" / "pick" captions on the play lines */
+.r-betk {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.r-pickline { color: var(--ink-faint); }
+
 /* results: score + verdict */
 .r-score { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .r-score .r-sep { color: var(--ink-faint); margin: 0 3px; }
@@ -218,6 +237,13 @@
 .r-verdict.hit .chip  { background: var(--signal-dim); }
 .r-verdict.miss { color: var(--counter); }
 .r-verdict.miss .chip { background: var(--counter-dim); }
+/* live, in-progress states (not yet graded) */
+.r-verdict.leading  { color: var(--signal); }
+.r-verdict.leading .chip  { background: var(--signal-dim); }
+.r-verdict.trailing { color: var(--counter); }
+.r-verdict.trailing .chip { background: var(--counter-dim); }
+.r-verdict.tied { color: var(--ink-dim); }
+.r-verdict.tied .chip { background: var(--panel-hi); }
 .r-status { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink-faint); display: inline-flex; align-items: center; gap: 5px; }
 .r-status.live { color: var(--signal); }
 
@@ -316,6 +342,7 @@
 
 /* legend divider */
 .legend-sep { width: 1px; height: 14px; background: var(--rule-strong); }
+.legend-mute { color: var(--ink-faint); }
 
 /* secondary segmented control (bet type) — tinted active so it doesn't read as
    one selection with the solid-cyan sport control beside it */

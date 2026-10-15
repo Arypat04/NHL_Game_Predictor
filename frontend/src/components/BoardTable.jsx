@@ -59,6 +59,11 @@ function BoardTable({ board, loading, error, rawCount = 0, threshold, onClear, m
           const betEdge = e ? (betHome ? e.Home_Edge : e.Away_Edge) : null
           const betOdds = e ? (betHome ? e.Home_Odds : e.Away_Odds) : null
           const divergent = hasOdds && betHome !== pickHome
+          // Model win prob for the side we're betting, and the market baseline it
+          // beats. Derive market as (model − edge) so the shown equation always
+          // resolves exactly to the displayed edge, with no rounding drift.
+          const modelBetPct = betHome ? g.Home_Win_Prob : (g.Away_Win_Prob ?? 1 - g.Home_Win_Prob)
+          const marketShown = hasOdds ? modelBetPct - betEdge : null
 
           return (
             <div className="reading" key={i}>
@@ -92,7 +97,7 @@ function BoardTable({ board, loading, error, rawCount = 0, threshold, onClear, m
                   <>
                     <div
                       className={`r-metric mono ${betEdge > 0 ? "is-for" : betEdge < 0 ? "is-against" : ""}`}
-                      title="Edge in percentage points: model win probability minus the market's implied probability."
+                      title="Edge = model win probability − market implied probability, in percentage points."
                     >
                       {betEdge !== 0 && (
                         <span className={`r-edgedir ${betEdge > 0 ? "is-for" : "is-against"}`}>
@@ -101,35 +106,35 @@ function BoardTable({ board, loading, error, rawCount = 0, threshold, onClear, m
                       )}
                       {fmtEdge(betEdge)}<span className="r-unit">pts</span>
                     </div>
-                    {divergent ? (
-                      <>
-                        <div className="r-sub is-diverge">
-                          <span className="split-tag">SPLIT</span>
-                          bet&nbsp;<b className="mono">{betCode}</b>
-                          <span className="r-dot-sep">·</span>
-                          <span className="mono">{fmtOdds(betOdds)}</span>
-                          <span className="r-dot-sep">·</span>{e.Bookmaker}
-                        </div>
-                        <div className="r-sub">
-                          pick&nbsp;<b className="mono">{pickCode}</b>
-                          <span className="r-dot-sep">·</span>
-                          <span className="mono">{fmtPct(g.Confidence)}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="r-sub">
-                        <b className="mono">{betCode}</b>
+
+                    <div className="r-eq" title="How the edge is calculated: the model's win probability for the bet, minus the market's implied probability.">
+                      <span className="r-op"><span className="r-op-k">model</span>{fmtPct(modelBetPct)}</span>
+                      <span className="r-minus" aria-label="minus">−</span>
+                      <span className="r-op"><span className="r-op-k">market</span>{fmtPct(marketShown)}</span>
+                    </div>
+
+                    <div className={`r-sub ${divergent ? "is-diverge" : ""}`}>
+                      {divergent && <span className="split-tag">SPLIT</span>}
+                      {divergent && <span className="r-betk">bet</span>}
+                      <b className="mono">{betCode}</b>
+                      <span className="r-dot-sep">·</span>
+                      <span className="mono">{fmtOdds(betOdds)}</span>
+                      <span className="r-dot-sep">·</span>{e.Bookmaker}
+                    </div>
+
+                    {divergent && (
+                      <div className="r-sub r-pickline">
+                        <span className="r-betk">pick</span>
+                        <b className="mono">{pickCode}</b>
                         <span className="r-dot-sep">·</span>
                         <span className="mono">{fmtPct(g.Confidence)}</span>
-                        <span className="r-dot-sep">·</span>
-                        <span className="mono">{fmtOdds(betOdds)}</span> {e.Bookmaker}
                       </div>
                     )}
                   </>
                 ) : (
                   <>
                     <div className="r-metric mono">{fmtPct(g.Confidence)}</div>
-                    <div className="r-sub">pick&nbsp;<b className="mono">{pickCode}</b> confidence</div>
+                    <div className="r-sub"><span className="r-betk">pick</span><b className="mono">{pickCode}</b> confidence</div>
                   </>
                 )}
               </div>

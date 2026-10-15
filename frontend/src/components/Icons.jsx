@@ -63,6 +63,11 @@ export const IconClock = (p) => (
   <Svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></Svg>
 )
 
+/* level scores — an equals mark for a live tie */
+export const IconTie = (p) => (
+  <Svg {...p}><path d="M5 9.5h14M5 14.5h14" /></Svg>
+)
+
 export const IconFilter = (p) => (
   <Svg {...p}><path d="M3 5h18M6 12h12M10 19h4" /></Svg>
 )
