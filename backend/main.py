@@ -31,9 +31,14 @@ SPORTS = {
     },
 }
 
+# NHL gameState progression: FUT/PRE → LIVE → CRIT → OVER → FINAL → OFF. A game
+# is "over" (final score set) at OVER/FINAL, well before it becomes OFF (box
+# score officially confirmed), so those must count as Final or a just-ended game
+# disappears from results until it goes official.
 STATE_MAP = {
-    "OFF": "Final", "LIVE": "Live", "PRG": "Live",
-    "CRIT": "Live", "FUT": "Scheduled", "PRE": "Scheduled",
+    "OFF": "Final", "FINAL": "Final", "OVER": "Final",
+    "LIVE": "Live", "PRG": "Live", "CRIT": "Live",
+    "FUT": "Scheduled", "PRE": "Scheduled",
 }
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
@@ -306,7 +311,7 @@ def _nhl_results(date: str, predictor) -> list:
     results = []
     for game in games:
         state = game.get("gameState", "")
-        if state not in ("OFF", "LIVE", "PRG", "CRIT"):
+        if state not in ("OFF", "FINAL", "OVER", "LIVE", "PRG", "CRIT"):
             continue
 
         away = game["awayTeam"]["abbrev"]
